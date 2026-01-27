@@ -31,7 +31,8 @@ python3 box_generator.py
     -   Tab dimensions
     -   Optional logic: Text engraving, Logo, Fractal, Lid, Divider.
 3.  **Generate Mailer Box SVG**: (New) Generates a detailed FEFCO 0427 "Rollover" Mailer Box. Features double side walls (rollover) with locking tabs that fit into base slots, and a hinged lid with dust flaps.
-4.  **Run Example Suite**: Generates test files including the complex mailer.
+4.  **Generate Tray SVG**: (New) Generates a lidless version of the Rollover Mailer (FEFCO 0422 style). Symmetric design with double side walls and corner flaps.
+5.  **Run Example Suite**: Generates test files including the complex mailer and tray.
 
 ## Output Details
 -   **File Format**: SVG (Scalable Vector Graphics), mm units.

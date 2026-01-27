@@ -428,6 +428,54 @@ def get_float(prompt, default=None):
         print("Invalid number.")
         return get_float(prompt, default)
 
+def draw_rollover_wall(svg, x_attach, y_top, y_bot, h, t, direction, slots_y):
+    """Refactored helper to draw a rollover double wall with locking tabs."""
+    # direction: -1 for Left, 1 for Right
+    
+    # Outer Wall
+    x_fold = x_attach + direction * h
+    svg.add_line(x_fold, y_top, x_fold, y_bot, "ENGRAVE") # Fold between Outer/Inner
+    
+    # Outer Wall Top/Bot Edges
+    svg.add_line(x_attach, y_top, x_fold, y_top, "CUT")
+    svg.add_line(x_attach, y_bot, x_fold, y_bot, "CUT")
+    
+    # Inner Wall
+    inner_w = h - t # Slightly less
+    x_end = x_fold + direction * inner_w
+    
+    # Inner Wall Top/Bot Edges
+    svg.add_line(x_fold, y_top, x_end, y_top, "CUT")
+    svg.add_line(x_fold, y_bot, x_end, y_bot, "CUT")
+    
+    # Edge with Locking Tabs aligned to slots_y
+    # tab_h should match slot size (20 from mailer code)
+    slot_h = 20
+    tab_depth = 4 # sticking out
+    x_tab = x_end + direction * tab_depth
+    
+    curr_y = y_top
+    
+    # Create locking tabs for each slot position
+    # slots_y is a list of center Y coordinates for the tabs
+    sorted_slots = sorted(slots_y)
+    
+    for slot_y_center in sorted_slots:
+        t_y1 = slot_y_center - slot_h/2 + 1
+        t_y2 = slot_y_center + slot_h/2 - 1
+        
+        # Line to start of tab
+        svg.add_line(x_end, curr_y, x_end, t_y1, "CUT")
+        # Tab shape
+        svg.add_line(x_end, t_y1, x_tab, t_y1, "CUT")
+        svg.add_line(x_tab, t_y1, x_tab, t_y2, "CUT")
+        svg.add_line(x_tab, t_y2, x_end, t_y2, "CUT")
+        
+        curr_y = t_y2
+        
+    # Final segment to bottom
+    svg.add_line(x_end, curr_y, x_end, y_bot, "CUT")
+
 
 
 def generate_mailer_box_svg(params, filename="mailer_box.svg"):
@@ -618,74 +666,17 @@ def generate_mailer_box_svg(params, filename="mailer_box.svg"):
     # Attached to Base Left/Right.
     # Structure: Outer Wall (width H) -> Fold -> Inner Wall (width H-t) -> Tabs.
     
-    def draw_rollover(x_attach, y_top, y_bot, direction):
-        # direction: -1 for Left, 1 for Right
-        
-        # Outer Wall
-        x_fold = x_attach + direction * H
-        svg.add_line(x_fold, y_top, x_fold, y_bot, "ENGRAVE") # Fold between Outer/Inner
-        
-        # Outer Wall Top/Bot Edges
-        svg.add_line(x_attach, y_top, x_fold, y_top, "CUT")
-        svg.add_line(x_attach, y_bot, x_fold, y_bot, "CUT")
-        
-        # Inner Wall
-        inner_w = H - t # Slightly less
-        x_end = x_fold + direction * inner_w
-        
-        # Inner Wall Top/Bot Edges
-        svg.add_line(x_fold, y_top, x_end, y_top, "CUT")
-        svg.add_line(x_fold, y_bot, x_end, y_bot, "CUT")
-        
-        # Edge with Locking Tabs
-        # The edge is at x_end.
-        # Tabs need to align with slots in Base.
-        # Slots are at y positions: by + S/4 and by + 3S/4.
-        # Size slot_h.
-        
-        # We need to leave "tabs" on the edge.
-        # Draw the line segments skipping the tabs.
-        
-        # Y Range of wall: [y_top, y_bot] = [by, by+S]
-        
-        # Tab 1
-        t1_y_center = y_top + S/4
-        t1_y1 = t1_y_center - slot_h/2 + 1 # slightly smaller than slot
-        t1_y2 = t1_y_center + slot_h/2 - 1
-        
-        # Tab 2
-        t2_y_center = y_top + 3*S/4
-        t2_y1 = t2_y_center - slot_h/2 + 1
-        t2_y2 = t2_y_center + slot_h/2 - 1
-        
-        tab_depth = 4 # sticking out
-        x_tab = x_end + direction * tab_depth
-        
-        # Drawing the edge from Top down
-        curr_y = y_top
-        
-        # Segment to Tab 1
-        svg.add_line(x_end, curr_y, x_end, t1_y1, "CUT")
-        # Tab 1
-        svg.add_line(x_end, t1_y1, x_tab, t1_y1, "CUT")
-        svg.add_line(x_tab, t1_y1, x_tab, t1_y2, "CUT")
-        svg.add_line(x_tab, t1_y2, x_end, t1_y2, "CUT")
-        
-        # Segment to Tab 2
-        svg.add_line(x_end, t1_y2, x_end, t2_y1, "CUT")
-        # Tab 2
-        svg.add_line(x_end, t2_y1, x_tab, t2_y1, "CUT")
-        svg.add_line(x_tab, t2_y1, x_tab, t2_y2, "CUT")
-        svg.add_line(x_tab, t2_y2, x_end, t2_y2, "CUT")
-        
-        # Segment to Bottom
-        svg.add_line(x_end, t2_y2, x_end, y_bot, "CUT")
-
-    # Left Wing
-    draw_rollover(bx, by, by + S, -1)
+    # --- 7. Rollover Side Wings (using helper) ---
+    # Attached to Base Left/Right.
     
-    # Right Wing
-    draw_rollover(bx + S, by, by + S, 1)
+    # Calculate slot positions (same as derived in Base section)
+    # s1_y = by + S/4
+    # s2_y = by + 3*S/4
+    s1_y = by + S/4
+    s2_y = by + 3*S/4
+    
+    draw_rollover_wall(svg, bx, by, by + S, H, t, -1, [s1_y, s2_y]) # Left
+    draw_rollover_wall(svg, bx + S, by, by + S, H, t, 1, [s1_y, s2_y]) # Right
 
     # --- Text ---
     if params.get('text_top'):
@@ -694,6 +685,98 @@ def generate_mailer_box_svg(params, filename="mailer_box.svg"):
     svg.save()
     return True
 
+
+
+def generate_tray_svg(params, filename="tray_rollover.svg"):
+    """Generates a lidless tray with double rollover side walls (FEFCO 0422 style)."""
+    S = params['S']
+    H = params['H']
+    t = params['t']
+    stock_w = params['stock_w']
+    stock_h = params['stock_h']
+    
+    # Layout Check
+    total_w = S + 4*H + 20
+    total_h = S + 2*(H + H) + 20 # S + 4H roughly
+    
+    if total_w > stock_w or total_h > stock_h:
+        print(f"Error: Layout size ({total_w:.1f} x {total_h:.1f} mm) larger than stock ({stock_w} x {stock_h} mm).")
+        return False
+    
+    svg = SVGGenerator(filename, stock_w, stock_h)
+    
+    cx = stock_w / 2
+    cy = stock_h / 2
+    
+    # Coordinates
+    bx = cx - S/2
+    by = cy - S/2
+    
+    # --- Base ---
+    svg.add_line(bx, by, bx + S, by, "ENGRAVE") 
+    svg.add_line(bx, by + S, bx + S, by + S, "ENGRAVE")
+    svg.add_line(bx, by, bx, by + S, "ENGRAVE")
+    svg.add_line(bx + S, by, bx + S, by + S, "ENGRAVE")
+    
+    # Slots (Same as mailer)
+    slot_w = 4; slot_h = 20; slot_inset = 2
+    s1_y = by + S/4
+    s2_y = by + 3*S/4
+    
+    ls_x = bx + slot_inset
+    svg.add_rect(ls_x, s1_y - slot_h/2, slot_w, slot_h, "CUT")
+    svg.add_rect(ls_x, s2_y - slot_h/2, slot_w, slot_h, "CUT")
+    
+    rs_x = bx + S - slot_inset - slot_w
+    svg.add_rect(rs_x, s1_y - slot_h/2, slot_w, slot_h, "CUT")
+    svg.add_rect(rs_x, s2_y - slot_h/2, slot_w, slot_h, "CUT")
+    
+    # --- Front/Back Walls with Corner Flaps ---
+    
+    def draw_end_wall_assembly(y_hinge, is_top):
+        # direction_y: -1 for Top (up), 1 for Bot (down)
+        dy = -1 if is_top else 1
+        y_edge = y_hinge + dy * H
+        
+        # Left Corner Flap
+        flap_w = H - 2*t # clearance
+        flap_x_outer = bx - flap_w
+        
+        # Fold Main Wall - Flap (Actually fold base-wall is done)
+        # We need folds between Wall and Flaps?
+        # Yes, corner flaps are attached to Left/Right of the Wall panel.
+        
+        # Wall Panel Vertical Edges (Folds to flaps)
+        svg.add_line(bx, y_hinge, bx, y_edge, "ENGRAVE")
+        svg.add_line(bx + S, y_hinge, bx + S, y_edge, "ENGRAVE")
+        
+        # Draw Left Flap
+        # y positions are same as wall: y_hinge to y_edge
+        svg.add_line(flap_x_outer, y_hinge, bx, y_hinge, "CUT") # Side (near base)
+        svg.add_line(flap_x_outer, y_hinge, flap_x_outer, y_edge, "CUT") # Outer
+        svg.add_line(flap_x_outer, y_edge, bx, y_edge, "CUT") # Top/Bot edge
+        
+        # Draw Right Flap
+        flap_x_outer_r = bx + S + flap_w
+        svg.add_line(bx + S, y_hinge, flap_x_outer_r, y_hinge, "CUT")
+        svg.add_line(flap_x_outer_r, y_hinge, flap_x_outer_r, y_edge, "CUT")
+        svg.add_line(flap_x_outer_r, y_edge, bx + S, y_edge, "CUT")
+        
+        # Main Wall Top/Bot Edge (Outer edge)
+        svg.add_line(bx, y_edge, bx + S, y_edge, "CUT")
+
+    # Draw Back Assembly (Top)
+    draw_end_wall_assembly(by, True)
+    
+    # Draw Front Assembly (Bottom)
+    draw_end_wall_assembly(by + S, False)
+    
+    # --- Rollover Wings ---
+    draw_rollover_wall(svg, bx, by, by + S, H, t, -1, [s1_y, s2_y]) # Left
+    draw_rollover_wall(svg, bx + S, by, by + S, H, t, 1, [s1_y, s2_y]) # Right
+    
+    svg.save()
+    return True
 
 def get_bool(prompt):
     val = input(f"{prompt} (y/n) [n]: ").lower()
@@ -754,6 +837,9 @@ def run_examples():
     p_mail['text_top'] = "Mailer Box"
     generate_mailer_box_svg(p_mail, "example_mailer.svg")
     
+    # Tray Example
+    generate_tray_svg(p_mail, "example_tray.svg")
+    
     print("Examples generated.")
 
 def main():
@@ -761,7 +847,8 @@ def main():
     print("1. Generate Rectangle SVG (Task 1)")
     print("2. Generate Box SVGs (Standard Open Bin)")
     print("3. Generate Mailer Box SVG (FEFCO 0427)")
-    print("4. Run Example Suite")
+    print("4. Generate Tray SVG (Lidless 0427)")
+    print("5. Run Example Suite")
     
     choice = input("Select > ")
     
@@ -812,6 +899,15 @@ def main():
         generate_mailer_box_svg(params, "mailer_box.svg")
         
     elif choice == '4':
+        params = {}
+        params['stock_w'] = get_float("Stock Width", 600)
+        params['stock_h'] = get_float("Stock Height", 600) 
+        params['t'] = get_float("Thickness t", 3.0)
+        params['S'] = get_float("Side S", 150.0)
+        params['H'] = get_float("Height H", 50.0)
+        generate_tray_svg(params, "tray_rollover.svg")
+        
+    elif choice == '5':
         run_examples()
     else:
         print("Invalid choice.")
