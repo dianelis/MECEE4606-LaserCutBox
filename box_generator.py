@@ -8,6 +8,7 @@ It runs as a CLI and produces clean, compliant SVG files.
 """
 
 import math
+import os
 
 # --- Constants ---
 
@@ -20,7 +21,9 @@ STROKE_WIDTH = "0.2"
 class SVGGenerator:
     """A simple self-contained SVG generator."""
     def __init__(self, filename, width, height, unit="mm"):
-        self.filename = filename
+        self.filename = os.path.join("output", filename)
+        # Ensure output directory exists
+        os.makedirs("output", exist_ok=True)
         self.width = width
         self.height = height
         self.unit = unit
