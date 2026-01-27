@@ -30,8 +30,8 @@ python3 box_generator.py
     -   Box Side ($S$) and Height ($H$)
     -   Tab dimensions
     -   Optional logic: Text engraving, Logo, Fractal, Lid, Divider.
-3.  **Generate Mailer Box SVG**: (New) Generates a FEFCO 0427 "Ear Lock Mailer" style box (single piece with hinged lid).
-4.  **Run Example Suite**: Generates 4 test files (`example1` to `example4`, plus `example_mailer`) to demonstrate capabilities.
+3.  **Generate Mailer Box SVG**: (New) Generates a detailed FEFCO 0427 "Rollover" Mailer Box. Features double side walls (rollover) with locking tabs that fit into base slots, and a hinged lid with dust flaps.
+4.  **Run Example Suite**: Generates test files including the complex mailer.
 
 ## Output Details
 -   **File Format**: SVG (Scalable Vector Graphics), mm units.

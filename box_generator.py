@@ -429,8 +429,9 @@ def get_float(prompt, default=None):
         return get_float(prompt, default)
 
 
+
 def generate_mailer_box_svg(params, filename="mailer_box.svg"):
-    """Generates a FEFCO 0427 style mailer box (one piece with hinged lid)."""
+    """Generates a detailed FEFCO 0427 mailer box with rollover side walls."""
     # Params
     S = params['S'] # Inner width/length (Square base)
     H = params['H'] # Inner height
@@ -438,281 +439,261 @@ def generate_mailer_box_svg(params, filename="mailer_box.svg"):
     stock_w = params['stock_w']
     stock_h = params['stock_h']
     
-    # Geometry Calculations
-    # Structure: 
-    # [Lid Flap] - [Lid] - [Back] - [Base] - [Front Outer] - [Front Inner]
-    #               |
-    #          [Dust Flap]
-    
-    # Widths (X-dimension)
-    # The Lid needs to be wider than the Base to fit over the walls.
-    # Base Width = S
-    # Side Wall Thickness = t (each)
-    # Outer Width = S + 2t.
-    # So Lid Width = S + 2t + clearance? Let's say S + 3t.
-    
-    # Let's align everything centrally.
-    
-    # Heights (Y-dimension) sections:
-    # 1. Lid Locking Flap: Height H (approx)
-    # 2. Lid Panel: Depth S_lid = S + t (to cover front wall thickness)
-    # 3. Back Wall: Height H
-    # 4. Base Panel: Depth S
-    # 5. Front Wall Outer: Height H
-    # 6. Front Wall Inner: Height H - t
+    # Topology:
+    # Central Column: Lid Flap -> Lid -> Back Wall -> Base -> Front Wall (Double?)
+    # Actually, 0427 standard:
+    # - Base is S x S.
+    # - Back Wall (H) -> Lid (S + ~t) -> Lid Flap (H inwards? or Tuck flap)
+    # - Side Wings (Attached to Base): Outer Wall (H) -> Inner Wall (H-t) -> Locking Tabs
+    # - Front Wall (Attached to Base): Double thickness usually? 
+    #   Wait, looking at the blueprint:
+    #   Bottom panel is "Front Wall". Included tabs on sides?
+    #   Usually 0427 Front Wall is formed by the Side Wings folding over and locking?
+    #   No, 0427 has a Front Wall panel attached to the base.
+    #   The Side Wings have "ears" that tuck into the Front Wall?
+    #   Image Analysis:
+    #   - Bottom Panel (Front Wall): Single panel. Height ~H.
+    #   - Side Wings have "ears" on the FRONT end. These ears tuck into the Front Wall (Double wall front).
+    #   - BUT the blueprint shows Side Wings rolling over (Double Side Walls).
+    #   
+    #   Let's implement the robust "Rollover Side" 0427:
+    #   1. Base (S x S)
+    #   2. Back Wall (Attached to Base Top). Height H.
+    #   3. Lid (Attached to Back Top). Depth S. Width S (plus clearance).
+    #      - Includes Dust Flaps on sides (Tuck into side walls).
+    #      - Includes Front Tuck Flap (Tucks into Front Wall).
+    #   4. Front Wall (Attached to Base Bottom). Height H.
+    #      - Has slots to receive Side Wing lugs?
+    #      - Or is it double?
+    #      Let's go with a simpler interpretation of the blueprint which seems to be:
+    #      - Side Walls are double (Rollover). They have tabs that lock into the BASE slots.
+    #      - Front Wall is attached to Base.
+    #      - Lid tucks into Front Wall.
     
     # Dimensions
-    Lid_W = S + 2*t + 1.0 # 1mm clearance
-    Lid_D = S + t
-    
+    # Base
     Base_W = S
     Base_D = S
     
-    DustFlap_W = H - t # Slightly less than H to fit
+    # Walls
+    Back_H = H
+    Front_H = H
     
-    # Layout check
-    # Max Width = DustFlap + Lid_W + DustFlap
-    # Max Height = Flap_H + Lid_D + Back_H + Base_D + Front_H + Front_Inner_H
+    # Lid
+    Lid_D = S # Covers the base
+    # Lid Width: Needs to cover the Side Walls.
+    # Side Walls are Double. Thickness = 2*t?
+    # If Outer Wall is vertical, Inner Wall is inside.
+    # Outer dimension is Base_W + 2*t.
+    # So Lid Width = Base_W + 2*t.
+    Lid_W = S + 2*t
     
-    total_w = Lid_W + 2 * DustFlap_W
-    total_h = H + Lid_D + H + Base_D + H + (H-t)
+    # Side Wings (Rollover)
+    # Outer Side Height = H
+    # Inner Side Height = H - t (to sit on base)
+    # Locking Lugs on Inner Side bottom edge.
+    
+    # Layout Calculation
+    # Width = LeftSide (H + H) + Base (S) + RightSide (H + H) = S + 4H
+    # Height = LidFlap + Lid + Back + Base + Front
+    
+    # Check Stock
+    total_w = S + 4 * H + 20 # margins
+    total_h = H + Lid_D + Back_H + Base_D + Front_H + 20
     
     if total_w > stock_w or total_h > stock_h:
         print(f"Error: Layout size ({total_w:.1f} x {total_h:.1f} mm) larger than stock ({stock_w} x {stock_h} mm).")
         return False
-    
+        
     svg = SVGGenerator(filename, stock_w, stock_h)
     
     cx = stock_w / 2
     cy = stock_h / 2
     
-    # Vertical Positions (Y coordinates of fold lines)
-    # Let's pivot around the Base.
-    # Base Y range: [y_base_top, y_base_bot]
+    # Y-Flow (Top to Bottom)
+    # We center the Base
+    y_base_top = cy - S/2
+    y_base_bot = cy + S/2
     
-    # Calculate total height of the stack
-    # Top of stack (Lid Flap Top)
-    # Bottom of stack (Front Inner Bottom)
+    bx = cx - S/2
+    by = y_base_top
     
-    # We position Base roughly in middle-bottom
-    # Offsets from center?
-    # Let's just calculate y_start
-    y_start = (stock_h - total_h) / 2
+    # --- 1. Base ---
+    # Folds
+    svg.add_line(bx, by, bx + S, by, "ENGRAVE") # Back
+    svg.add_line(bx, by + S, bx + S, by + S, "ENGRAVE") # Front
+    svg.add_line(bx, by, bx, by + S, "ENGRAVE") # Left
+    svg.add_line(bx + S, by, bx + S, by + S, "ENGRAVE") # Right
     
-    y_lid_flap_start = y_start
-    y_lid_start      = y_lid_flap_start + H
-    y_back_start     = y_lid_start + Lid_D
-    y_base_start     = y_back_start + H
-    y_front_start    = y_base_start + Base_D
-    y_front_inner_start = y_front_start + H
-    y_end            = y_front_inner_start + (H - t)
+    # Slots for Rollover Tabs
+    # Located in Base, near Left/Right edges.
+    # Tab Position: Centered or specific? 
+    # Usually 2 slots per side or 1 long one.
+    # Blueprint has rectangles. Let's put 2 slots per side.
+    slot_w = 4 # Width of slot (thickness accommodation)
+    slot_h = 20 # Length of slot
+    slot_inset = 2 # From edge
     
-    # X Center
-    xc = cx
+    # Left Slots
+    ls_x = bx + slot_inset
+    svg.add_rect(ls_x, by + S/4 - slot_h/2, slot_w, slot_h, "CUT")
+    svg.add_rect(ls_x, by + 3*S/4 - slot_h/2, slot_w, slot_h, "CUT")
     
-    # --- 1. Base (Central Reference) ---
-    bx = xc - S/2
-    by = y_base_start
+    # Right Slots
+    rs_x = bx + S - slot_inset - slot_w
+    svg.add_rect(rs_x, by + S/4 - slot_h/2, slot_w, slot_h, "CUT")
+    svg.add_rect(rs_x, by + 3*S/4 - slot_h/2, slot_w, slot_h, "CUT")
     
-    # Fold: Base-Back
-    svg.add_line(bx, by, bx + S, by, "ENGRAVE") 
-    # Fold: Base-Front
-    svg.add_line(bx, by + S, bx + S, by + S, "ENGRAVE")
-    # Fold: Base-Left (Side Wall)
-    svg.add_line(bx, by, bx, by + S, "ENGRAVE")
-    # Fold: Base-Right (Side Wall)
-    svg.add_line(bx + S, by, bx + S, by + S, "ENGRAVE")
+    # --- 2. Back Wall ---
+    # [bx, bx+S] x [by-H, by]
+    y_back_top = by - H
+    svg.add_line(bx, y_back_top, bx + S, y_back_top, "ENGRAVE") # Fold to Lid
+    svg.add_line(bx, y_back_top, bx, by, "CUT") # Left Edge
+    svg.add_line(bx + S, y_back_top, bx + S, by, "CUT") # Right Edge
     
-    # --- 2. Side Walls (Attached to Base Left/Right) ---
-    # Width H. Length S.
-    # Left Side Wall
-    ls_x_outer = bx - H
-    # Top edge (free?) No, usually angled or straight.
-    svg.add_line(ls_x_outer, by, bx, by, "CUT") # Top edge
-    svg.add_line(ls_x_outer, by + S, bx, by + S, "CUT") # Bot edge
-    svg.add_line(ls_x_outer, by, ls_x_outer, by + S, "CUT") # Outer edge
-    # Locking Ears?
-    # Standard 0427 has tabs extending from the *ends* of the side walls.
-    # Let's add a tab on the Front end of the side wall (y = by+S)
-    # Tab size
-    tab_h = H - 2 # slightly smaller
-    tab_w = 15
-    # Tab sticks out downwards from Left Side Wall?
-    # No, Side wall is [bx-H, bx] x [by, by+S].
-    # Tab at bottom: [bx-H, bx] x [by+S, by+S+tab_w] approx.
-    # We will simulate the ear.
-    # Simple ear: Rectangular extension.
-    ear_x_start = ls_x_outer + 2
-    ear_x_end = bx - 2
-    ear_y_start = by + S
-    ear_y_end = by + S + tab_w
+    # --- 3. Lid ---
+    # [lid_x_left, lid_x_right] x [y_lid_top, y_back_top]
+    # Lid Width = S + 2t. Centered on Back.
+    lid_x_left = cx - Lid_W/2
+    lid_x_right = cx + Lid_W/2
+    y_lid_top = y_back_top - Lid_D
     
-    svg.add_line(ear_x_start, ear_y_start, ear_x_start, ear_y_end, "CUT")
-    svg.add_line(ear_x_start, ear_y_end, ear_x_end, ear_y_end, "CUT")
-    svg.add_line(ear_x_end, ear_y_end, ear_x_end, ear_y_start, "CUT")
-    # Fold line where ear meets side wall
-    svg.add_line(ear_x_start, ear_y_start, ear_x_end, ear_y_start, "ENGRAVE")
+    # Connection Back->Lid
+    svg.add_line(bx, y_back_top, lid_x_left, y_back_top, "CUT")
+    svg.add_line(bx + S, y_back_top, lid_x_right, y_back_top, "CUT")
     
-    # Right Side Wall
-    rs_x_inner = bx + S
-    rs_x_outer = rs_x_inner + H
-    svg.add_line(rs_x_inner, by, rs_x_outer, by, "CUT")
-    svg.add_line(rs_x_inner, by + S, rs_x_outer, by + S, "CUT")
-    svg.add_line(rs_x_outer, by, rs_x_outer, by + S, "CUT")
+    # Lid Side Folds (for Dust Flaps)
+    svg.add_line(lid_x_left, y_lid_top, lid_x_left, y_back_top, "ENGRAVE")
+    svg.add_line(lid_x_right, y_lid_top, lid_x_right, y_back_top, "ENGRAVE")
     
-    # Right Ear
-    ear_x_start = rs_x_inner + 2
-    ear_x_end = rs_x_outer - 2
-    svg.add_line(ear_x_start, ear_y_start, ear_x_start, ear_y_end, "CUT")
-    svg.add_line(ear_x_start, ear_y_end, ear_x_end, ear_y_end, "CUT")
-    svg.add_line(ear_x_end, ear_y_end, ear_x_end, ear_y_start, "CUT")
-    svg.add_line(ear_x_start, ear_y_start, ear_x_end, ear_y_start, "ENGRAVE")
-    
-    # --- 3. Back Wall ---
-    # Attached to Base Top (by).
-    # Height H. Width S.
-    # Fold at bottom is done.
-    # Top Fold (Back-Lid)
-    back_top_y = y_lid_start + Lid_D # Wait, y coordinates...
-    # y_back_start to y_base_start
-    # Back is [bx, bx+S] x [y_back_start, y_base_start]
-    svg.add_line(bx, y_back_start, bx + S, y_back_start, "ENGRAVE")
-    # Sides of Back Wall (Free edges? Or usually connected to side walls with web?)
-    # Simple mode: Free edges (slits).
-    svg.add_line(bx, y_back_start, bx, by, "CUT")
-    svg.add_line(bx + S, y_back_start, bx + S, by, "CUT")
-    
-    # --- 4. Lid ---
-    # Attached to Back Top.
-    # Lid is [lid_x_left, lid_x_right] x [y_lid_start, y_back_start]
-    # Center the lid relative to Back? Back is width S. Lid is width S+2t.
-    lid_x_left = xc - Lid_W/2
-    lid_x_right = xc + Lid_W/2
-    
-    lid_y_bot = y_back_start
-    lid_y_top = y_lid_start
-    
-    # Connect Lid to Back (Trapezoidal transition usually, or just centered)
-    # Back width S. Lid width Lid_W.
-    # We need angled lines from Back corners to Lid corners.
-    svg.add_line(bx, lid_y_bot, lid_x_left, lid_y_bot, "CUT")
-    svg.add_line(bx + S, lid_y_bot, lid_x_right, lid_y_bot, "CUT")
-    
-    # Lid Sides (Fold lines for dust flaps)
-    svg.add_line(lid_x_left, lid_y_top, lid_x_left, lid_y_bot, "ENGRAVE")
-    svg.add_line(lid_x_right, lid_y_top, lid_x_right, lid_y_bot, "ENGRAVE")
-    
-    # --- 5. Dust Flaps ---
+    # --- 4. Lid Dust Flaps ---
     # Attached to Lid Sides.
-    # Left Flap: width DustFlap_W. Height Lid_D.
-    df_x_outer = lid_x_left - DustFlap_W
+    # Width H - 2 (clearance). Depth Lid_D (tapered).
+    df_w = H - 2
+    # Left
+    svg.add_line(lid_x_left - df_w, y_lid_top + 5, lid_x_left - df_w, y_back_top - 5, "CUT") # Outer
+    svg.add_line(lid_x_left - df_w, y_lid_top + 5, lid_x_left, y_lid_top, "CUT") # Top Diag
+    svg.add_line(lid_x_left - df_w, y_back_top - 5, lid_x_left, y_back_top, "CUT") # Bot Diag
     
-    # Top edge (angled for ease of insertion)
-    svg.add_line(df_x_outer, lid_y_top + 10, lid_x_left, lid_y_top, "CUT")
-    # Outer edge
-    svg.add_line(df_x_outer, lid_y_top + 10, df_x_outer, lid_y_bot - 10, "CUT")
-    # Bottom edge (angled)
-    svg.add_line(df_x_outer, lid_y_bot - 10, lid_x_left, lid_y_bot, "CUT")
+    # Right
+    svg.add_line(lid_x_right + df_w, y_lid_top + 5, lid_x_right + df_w, y_back_top - 5, "CUT")
+    svg.add_line(lid_x_right + df_w, y_lid_top + 5, lid_x_right, y_lid_top, "CUT")
+    svg.add_line(lid_x_right + df_w, y_back_top - 5, lid_x_right, y_back_top, "CUT")
     
-    # Right Flap
-    df_x_outer_r = lid_x_right + DustFlap_W
-    svg.add_line(df_x_outer_r, lid_y_top + 10, lid_x_right, lid_y_top, "CUT")
-    svg.add_line(df_x_outer_r, lid_y_top + 10, df_x_outer_r, lid_y_bot - 10, "CUT")
-    svg.add_line(df_x_outer_r, lid_y_bot - 10, lid_x_right, lid_y_bot, "CUT")
-    
-    # --- 6. Lid Front Flap (Locking) ---
-    # Attached to Lid Top (y_lid_start).
-    # Height H.
-    # Usually has locking tabs at the sides.
-    lf_y_top = y_lid_flap_start
-    lf_y_bot = y_lid_start
+    # --- 5. Lid Tuck Flap ---
+    # Attached to Lid Top (y_lid_top).
+    # Height ~ H.
+    # Tucks into Front Wall.
+    tf_h = H - 5
+    y_flap_end = y_lid_top - tf_h
     
     # Fold
-    svg.add_line(lid_x_left, lf_y_bot, lid_x_right, lf_y_bot, "ENGRAVE")
+    svg.add_line(lid_x_left, y_lid_top, lid_x_right, y_lid_top, "ENGRAVE")
     
-    # Shape:
-    # Starts at Lid width.
-    # Tapers in slightly? Or simple rectangular flap?
-    # Simple rectangular for now to fit inside front wall.
-    # Front Wall Inner width is S.
-    # Lid Flap needs to fit into S.
-    # Lid is S+2t.
-    # So we step in.
+    # Shape: Locking Ears ("Cherry Locks")
+    # Tapers in, then bumps out, then round.
+    # Simplified: Tapered rect.
+    flap_w_start = Lid_W
+    flap_w_end = Lid_W - 10
+    fx_left = cx - flap_w_end/2
+    fx_right = cx + flap_w_end/2
     
-    flap_width = S - 1.0 # clearance
-    fx_left = xc - flap_width/2
-    fx_right = xc + flap_width/2
+    svg.add_line(lid_x_left, y_lid_top, fx_left, y_flap_end, "CUT")
+    svg.add_line(lid_x_right, y_lid_top, fx_right, y_flap_end, "CUT")
+    svg.add_line(fx_left, y_flap_end, fx_right, y_flap_end, "CUT")
     
-    # Cut from Lid corner to Flap start
-    svg.add_line(lid_x_left, lf_y_bot, fx_left, lf_y_bot, "CUT")
-    svg.add_line(lid_x_right, lf_y_bot, fx_right, lf_y_bot, "CUT")
+    # --- 6. Front Wall ---
+    # Attached to Base Bottom (y_base_bot).
+    # Height H. Width S.
+    y_front_bot = y_base_bot + H
     
-    # Flap Sides (with Locking Ear Bump)
-    # Simple version: Straight down, rounded corners.
-    svg.add_line(fx_left, lf_y_bot, fx_left, lf_y_top, "CUT")
-    svg.add_line(fx_right, lf_y_bot, fx_right, lf_y_top, "CUT")
+    # Sides (Locking slots for Side Wings?)
+    # Usually standard 0427 Front Wall has folded ends that lock with side wings.
+    # Simple version: Rectangular panel.
+    svg.add_line(bx, y_base_bot, bx, y_front_bot, "CUT")
+    svg.add_line(bx + S, y_base_bot, bx + S, y_front_bot, "CUT")
+    svg.add_line(bx, y_front_bot, bx + S, y_front_bot, "CUT")
     
-    # Flap Top Edge
-    svg.add_line(fx_left, lf_y_top, fx_right, lf_y_top, "CUT")
+    # --- 7. Rollover Side Wings ---
+    # Attached to Base Left/Right.
+    # Structure: Outer Wall (width H) -> Fold -> Inner Wall (width H-t) -> Tabs.
     
-    # --- 7. Front Wall (Outer + Inner) ---
-    # Attached to Base Bottom (y_base_start + S).
+    def draw_rollover(x_attach, y_top, y_bot, direction):
+        # direction: -1 for Left, 1 for Right
+        
+        # Outer Wall
+        x_fold = x_attach + direction * H
+        svg.add_line(x_fold, y_top, x_fold, y_bot, "ENGRAVE") # Fold between Outer/Inner
+        
+        # Outer Wall Top/Bot Edges
+        svg.add_line(x_attach, y_top, x_fold, y_top, "CUT")
+        svg.add_line(x_attach, y_bot, x_fold, y_bot, "CUT")
+        
+        # Inner Wall
+        inner_w = H - t # Slightly less
+        x_end = x_fold + direction * inner_w
+        
+        # Inner Wall Top/Bot Edges
+        svg.add_line(x_fold, y_top, x_end, y_top, "CUT")
+        svg.add_line(x_fold, y_bot, x_end, y_bot, "CUT")
+        
+        # Edge with Locking Tabs
+        # The edge is at x_end.
+        # Tabs need to align with slots in Base.
+        # Slots are at y positions: by + S/4 and by + 3S/4.
+        # Size slot_h.
+        
+        # We need to leave "tabs" on the edge.
+        # Draw the line segments skipping the tabs.
+        
+        # Y Range of wall: [y_top, y_bot] = [by, by+S]
+        
+        # Tab 1
+        t1_y_center = y_top + S/4
+        t1_y1 = t1_y_center - slot_h/2 + 1 # slightly smaller than slot
+        t1_y2 = t1_y_center + slot_h/2 - 1
+        
+        # Tab 2
+        t2_y_center = y_top + 3*S/4
+        t2_y1 = t2_y_center - slot_h/2 + 1
+        t2_y2 = t2_y_center + slot_h/2 - 1
+        
+        tab_depth = 4 # sticking out
+        x_tab = x_end + direction * tab_depth
+        
+        # Drawing the edge from Top down
+        curr_y = y_top
+        
+        # Segment to Tab 1
+        svg.add_line(x_end, curr_y, x_end, t1_y1, "CUT")
+        # Tab 1
+        svg.add_line(x_end, t1_y1, x_tab, t1_y1, "CUT")
+        svg.add_line(x_tab, t1_y1, x_tab, t1_y2, "CUT")
+        svg.add_line(x_tab, t1_y2, x_end, t1_y2, "CUT")
+        
+        # Segment to Tab 2
+        svg.add_line(x_end, t1_y2, x_end, t2_y1, "CUT")
+        # Tab 2
+        svg.add_line(x_end, t2_y1, x_tab, t2_y1, "CUT")
+        svg.add_line(x_tab, t2_y1, x_tab, t2_y2, "CUT")
+        svg.add_line(x_tab, t2_y2, x_end, t2_y2, "CUT")
+        
+        # Segment to Bottom
+        svg.add_line(x_end, t2_y2, x_end, y_bot, "CUT")
+
+    # Left Wing
+    draw_rollover(bx, by, by + S, -1)
     
-    # Outer Front
-    # [bx, bx+S] x [y_front_start, y_front_inner_start]
-    # Sides are free (slits)
-    svg.add_line(bx, y_front_start, bx, y_front_inner_start, "CUT")
-    svg.add_line(bx + S, y_front_start, bx + S, y_front_inner_start, "CUT")
-    
-    # Fold to Inner Front
-    svg.add_line(bx, y_front_inner_start, bx + S, y_front_inner_start, "ENGRAVE") # Double fold usually
-    # Actually 0427 has a double line fold or slot here. Simple engrave for now.
-    
-    # Inner Front
-    # [bx, bx+S] x [y_front_inner_start, y_end]
-    # Sides are free
-    svg.add_line(bx, y_front_inner_start, bx, y_end, "CUT")
-    svg.add_line(bx + S, y_front_inner_start, bx + S, y_end, "CUT")
-    # Bottom edge (End of sheet)
-    svg.add_line(bx, y_end, bx + S, y_end, "CUT")
-    
-    # Slots for Side Ears?
-    # The ears fold in. The Front Inner folds over them.
-    # The Front Inner needs to lock into the bottom?
-    # Usually locking tabs on the bottom of Short Inner Front go into slots in base.
-    # Let's add 2 small slots in the Base near the fold.
-    slot_w = 15
-    slot_h = 2
-    # Position: near y_front_start, centered-ish
-    slot_y = y_front_start - slot_h - 1
-    sx1 = xc - S/4 - slot_w/2
-    sx2 = xc + S/4 - slot_w/2
-    
-    svg.add_rect(sx1, slot_y, slot_w, slot_h, "CUT")
-    svg.add_rect(sx2, slot_y, slot_w, slot_h, "CUT")
-    
-    # Mating tabs on the Inner Front Distal Edge
-    # y = y_end.
-    # Add tabs sticking out?
-    # We defined y_end as limit. Let's extend slightly for tabs?
-    # Or cut them INTO the panel.
-    # Let's assume friction fit for simplicity or the ears hold it.
-    # Actually, the ears from the side walls get trapped. That holds it mostly.
-    # But usually tabs lock it to the floor.
-    # Let's add tabs to the end of Inner Front.
-    tab_ext = 5
-    svg.add_line(xc - S/4 - slot_w/2, y_end, xc - S/4 + slot_w/2, y_end + tab_ext, "CUT") 
-    # This acts as a tab.
-    
-    # --- Text Features ---
+    # Right Wing
+    draw_rollover(bx + S, by, by + S, 1)
+
+    # --- Text ---
     if params.get('text_top'):
-        # On Lid Inner? (Visible when open)
-        # Verify orientation. Lid folds back. Top is "up".
-        # Text on Lid Panel.
-        svg.add_text(xc, (lid_y_top + lid_y_bot)/2, params['text_top'], font_size=8, mode="ENGRAVE")
+        svg.add_text(cx, (y_lid_top + y_back_top)/2, params['text_top'], font_size=10, mode="ENGRAVE")
 
     svg.save()
     return True
+
 
 def get_bool(prompt):
     val = input(f"{prompt} (y/n) [n]: ").lower()
