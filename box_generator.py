@@ -428,6 +428,292 @@ def get_float(prompt, default=None):
         print("Invalid number.")
         return get_float(prompt, default)
 
+
+def generate_mailer_box_svg(params, filename="mailer_box.svg"):
+    """Generates a FEFCO 0427 style mailer box (one piece with hinged lid)."""
+    # Params
+    S = params['S'] # Inner width/length (Square base)
+    H = params['H'] # Inner height
+    t = params['t'] # Material thickness
+    stock_w = params['stock_w']
+    stock_h = params['stock_h']
+    
+    # Geometry Calculations
+    # Structure: 
+    # [Lid Flap] - [Lid] - [Back] - [Base] - [Front Outer] - [Front Inner]
+    #               |
+    #          [Dust Flap]
+    
+    # Widths (X-dimension)
+    # The Lid needs to be wider than the Base to fit over the walls.
+    # Base Width = S
+    # Side Wall Thickness = t (each)
+    # Outer Width = S + 2t.
+    # So Lid Width = S + 2t + clearance? Let's say S + 3t.
+    
+    # Let's align everything centrally.
+    
+    # Heights (Y-dimension) sections:
+    # 1. Lid Locking Flap: Height H (approx)
+    # 2. Lid Panel: Depth S_lid = S + t (to cover front wall thickness)
+    # 3. Back Wall: Height H
+    # 4. Base Panel: Depth S
+    # 5. Front Wall Outer: Height H
+    # 6. Front Wall Inner: Height H - t
+    
+    # Dimensions
+    Lid_W = S + 2*t + 1.0 # 1mm clearance
+    Lid_D = S + t
+    
+    Base_W = S
+    Base_D = S
+    
+    DustFlap_W = H - t # Slightly less than H to fit
+    
+    # Layout check
+    # Max Width = DustFlap + Lid_W + DustFlap
+    # Max Height = Flap_H + Lid_D + Back_H + Base_D + Front_H + Front_Inner_H
+    
+    total_w = Lid_W + 2 * DustFlap_W
+    total_h = H + Lid_D + H + Base_D + H + (H-t)
+    
+    if total_w > stock_w or total_h > stock_h:
+        print(f"Error: Layout size ({total_w:.1f} x {total_h:.1f} mm) larger than stock ({stock_w} x {stock_h} mm).")
+        return False
+    
+    svg = SVGGenerator(filename, stock_w, stock_h)
+    
+    cx = stock_w / 2
+    cy = stock_h / 2
+    
+    # Vertical Positions (Y coordinates of fold lines)
+    # Let's pivot around the Base.
+    # Base Y range: [y_base_top, y_base_bot]
+    
+    # Calculate total height of the stack
+    # Top of stack (Lid Flap Top)
+    # Bottom of stack (Front Inner Bottom)
+    
+    # We position Base roughly in middle-bottom
+    # Offsets from center?
+    # Let's just calculate y_start
+    y_start = (stock_h - total_h) / 2
+    
+    y_lid_flap_start = y_start
+    y_lid_start      = y_lid_flap_start + H
+    y_back_start     = y_lid_start + Lid_D
+    y_base_start     = y_back_start + H
+    y_front_start    = y_base_start + Base_D
+    y_front_inner_start = y_front_start + H
+    y_end            = y_front_inner_start + (H - t)
+    
+    # X Center
+    xc = cx
+    
+    # --- 1. Base (Central Reference) ---
+    bx = xc - S/2
+    by = y_base_start
+    
+    # Fold: Base-Back
+    svg.add_line(bx, by, bx + S, by, "ENGRAVE") 
+    # Fold: Base-Front
+    svg.add_line(bx, by + S, bx + S, by + S, "ENGRAVE")
+    # Fold: Base-Left (Side Wall)
+    svg.add_line(bx, by, bx, by + S, "ENGRAVE")
+    # Fold: Base-Right (Side Wall)
+    svg.add_line(bx + S, by, bx + S, by + S, "ENGRAVE")
+    
+    # --- 2. Side Walls (Attached to Base Left/Right) ---
+    # Width H. Length S.
+    # Left Side Wall
+    ls_x_outer = bx - H
+    # Top edge (free?) No, usually angled or straight.
+    svg.add_line(ls_x_outer, by, bx, by, "CUT") # Top edge
+    svg.add_line(ls_x_outer, by + S, bx, by + S, "CUT") # Bot edge
+    svg.add_line(ls_x_outer, by, ls_x_outer, by + S, "CUT") # Outer edge
+    # Locking Ears?
+    # Standard 0427 has tabs extending from the *ends* of the side walls.
+    # Let's add a tab on the Front end of the side wall (y = by+S)
+    # Tab size
+    tab_h = H - 2 # slightly smaller
+    tab_w = 15
+    # Tab sticks out downwards from Left Side Wall?
+    # No, Side wall is [bx-H, bx] x [by, by+S].
+    # Tab at bottom: [bx-H, bx] x [by+S, by+S+tab_w] approx.
+    # We will simulate the ear.
+    # Simple ear: Rectangular extension.
+    ear_x_start = ls_x_outer + 2
+    ear_x_end = bx - 2
+    ear_y_start = by + S
+    ear_y_end = by + S + tab_w
+    
+    svg.add_line(ear_x_start, ear_y_start, ear_x_start, ear_y_end, "CUT")
+    svg.add_line(ear_x_start, ear_y_end, ear_x_end, ear_y_end, "CUT")
+    svg.add_line(ear_x_end, ear_y_end, ear_x_end, ear_y_start, "CUT")
+    # Fold line where ear meets side wall
+    svg.add_line(ear_x_start, ear_y_start, ear_x_end, ear_y_start, "ENGRAVE")
+    
+    # Right Side Wall
+    rs_x_inner = bx + S
+    rs_x_outer = rs_x_inner + H
+    svg.add_line(rs_x_inner, by, rs_x_outer, by, "CUT")
+    svg.add_line(rs_x_inner, by + S, rs_x_outer, by + S, "CUT")
+    svg.add_line(rs_x_outer, by, rs_x_outer, by + S, "CUT")
+    
+    # Right Ear
+    ear_x_start = rs_x_inner + 2
+    ear_x_end = rs_x_outer - 2
+    svg.add_line(ear_x_start, ear_y_start, ear_x_start, ear_y_end, "CUT")
+    svg.add_line(ear_x_start, ear_y_end, ear_x_end, ear_y_end, "CUT")
+    svg.add_line(ear_x_end, ear_y_end, ear_x_end, ear_y_start, "CUT")
+    svg.add_line(ear_x_start, ear_y_start, ear_x_end, ear_y_start, "ENGRAVE")
+    
+    # --- 3. Back Wall ---
+    # Attached to Base Top (by).
+    # Height H. Width S.
+    # Fold at bottom is done.
+    # Top Fold (Back-Lid)
+    back_top_y = y_lid_start + Lid_D # Wait, y coordinates...
+    # y_back_start to y_base_start
+    # Back is [bx, bx+S] x [y_back_start, y_base_start]
+    svg.add_line(bx, y_back_start, bx + S, y_back_start, "ENGRAVE")
+    # Sides of Back Wall (Free edges? Or usually connected to side walls with web?)
+    # Simple mode: Free edges (slits).
+    svg.add_line(bx, y_back_start, bx, by, "CUT")
+    svg.add_line(bx + S, y_back_start, bx + S, by, "CUT")
+    
+    # --- 4. Lid ---
+    # Attached to Back Top.
+    # Lid is [lid_x_left, lid_x_right] x [y_lid_start, y_back_start]
+    # Center the lid relative to Back? Back is width S. Lid is width S+2t.
+    lid_x_left = xc - Lid_W/2
+    lid_x_right = xc + Lid_W/2
+    
+    lid_y_bot = y_back_start
+    lid_y_top = y_lid_start
+    
+    # Connect Lid to Back (Trapezoidal transition usually, or just centered)
+    # Back width S. Lid width Lid_W.
+    # We need angled lines from Back corners to Lid corners.
+    svg.add_line(bx, lid_y_bot, lid_x_left, lid_y_bot, "CUT")
+    svg.add_line(bx + S, lid_y_bot, lid_x_right, lid_y_bot, "CUT")
+    
+    # Lid Sides (Fold lines for dust flaps)
+    svg.add_line(lid_x_left, lid_y_top, lid_x_left, lid_y_bot, "ENGRAVE")
+    svg.add_line(lid_x_right, lid_y_top, lid_x_right, lid_y_bot, "ENGRAVE")
+    
+    # --- 5. Dust Flaps ---
+    # Attached to Lid Sides.
+    # Left Flap: width DustFlap_W. Height Lid_D.
+    df_x_outer = lid_x_left - DustFlap_W
+    
+    # Top edge (angled for ease of insertion)
+    svg.add_line(df_x_outer, lid_y_top + 10, lid_x_left, lid_y_top, "CUT")
+    # Outer edge
+    svg.add_line(df_x_outer, lid_y_top + 10, df_x_outer, lid_y_bot - 10, "CUT")
+    # Bottom edge (angled)
+    svg.add_line(df_x_outer, lid_y_bot - 10, lid_x_left, lid_y_bot, "CUT")
+    
+    # Right Flap
+    df_x_outer_r = lid_x_right + DustFlap_W
+    svg.add_line(df_x_outer_r, lid_y_top + 10, lid_x_right, lid_y_top, "CUT")
+    svg.add_line(df_x_outer_r, lid_y_top + 10, df_x_outer_r, lid_y_bot - 10, "CUT")
+    svg.add_line(df_x_outer_r, lid_y_bot - 10, lid_x_right, lid_y_bot, "CUT")
+    
+    # --- 6. Lid Front Flap (Locking) ---
+    # Attached to Lid Top (y_lid_start).
+    # Height H.
+    # Usually has locking tabs at the sides.
+    lf_y_top = y_lid_flap_start
+    lf_y_bot = y_lid_start
+    
+    # Fold
+    svg.add_line(lid_x_left, lf_y_bot, lid_x_right, lf_y_bot, "ENGRAVE")
+    
+    # Shape:
+    # Starts at Lid width.
+    # Tapers in slightly? Or simple rectangular flap?
+    # Simple rectangular for now to fit inside front wall.
+    # Front Wall Inner width is S.
+    # Lid Flap needs to fit into S.
+    # Lid is S+2t.
+    # So we step in.
+    
+    flap_width = S - 1.0 # clearance
+    fx_left = xc - flap_width/2
+    fx_right = xc + flap_width/2
+    
+    # Cut from Lid corner to Flap start
+    svg.add_line(lid_x_left, lf_y_bot, fx_left, lf_y_bot, "CUT")
+    svg.add_line(lid_x_right, lf_y_bot, fx_right, lf_y_bot, "CUT")
+    
+    # Flap Sides (with Locking Ear Bump)
+    # Simple version: Straight down, rounded corners.
+    svg.add_line(fx_left, lf_y_bot, fx_left, lf_y_top, "CUT")
+    svg.add_line(fx_right, lf_y_bot, fx_right, lf_y_top, "CUT")
+    
+    # Flap Top Edge
+    svg.add_line(fx_left, lf_y_top, fx_right, lf_y_top, "CUT")
+    
+    # --- 7. Front Wall (Outer + Inner) ---
+    # Attached to Base Bottom (y_base_start + S).
+    
+    # Outer Front
+    # [bx, bx+S] x [y_front_start, y_front_inner_start]
+    # Sides are free (slits)
+    svg.add_line(bx, y_front_start, bx, y_front_inner_start, "CUT")
+    svg.add_line(bx + S, y_front_start, bx + S, y_front_inner_start, "CUT")
+    
+    # Fold to Inner Front
+    svg.add_line(bx, y_front_inner_start, bx + S, y_front_inner_start, "ENGRAVE") # Double fold usually
+    # Actually 0427 has a double line fold or slot here. Simple engrave for now.
+    
+    # Inner Front
+    # [bx, bx+S] x [y_front_inner_start, y_end]
+    # Sides are free
+    svg.add_line(bx, y_front_inner_start, bx, y_end, "CUT")
+    svg.add_line(bx + S, y_front_inner_start, bx + S, y_end, "CUT")
+    # Bottom edge (End of sheet)
+    svg.add_line(bx, y_end, bx + S, y_end, "CUT")
+    
+    # Slots for Side Ears?
+    # The ears fold in. The Front Inner folds over them.
+    # The Front Inner needs to lock into the bottom?
+    # Usually locking tabs on the bottom of Short Inner Front go into slots in base.
+    # Let's add 2 small slots in the Base near the fold.
+    slot_w = 15
+    slot_h = 2
+    # Position: near y_front_start, centered-ish
+    slot_y = y_front_start - slot_h - 1
+    sx1 = xc - S/4 - slot_w/2
+    sx2 = xc + S/4 - slot_w/2
+    
+    svg.add_rect(sx1, slot_y, slot_w, slot_h, "CUT")
+    svg.add_rect(sx2, slot_y, slot_w, slot_h, "CUT")
+    
+    # Mating tabs on the Inner Front Distal Edge
+    # y = y_end.
+    # Add tabs sticking out?
+    # We defined y_end as limit. Let's extend slightly for tabs?
+    # Or cut them INTO the panel.
+    # Let's assume friction fit for simplicity or the ears hold it.
+    # Actually, the ears from the side walls get trapped. That holds it mostly.
+    # But usually tabs lock it to the floor.
+    # Let's add tabs to the end of Inner Front.
+    tab_ext = 5
+    svg.add_line(xc - S/4 - slot_w/2, y_end, xc - S/4 + slot_w/2, y_end + tab_ext, "CUT") 
+    # This acts as a tab.
+    
+    # --- Text Features ---
+    if params.get('text_top'):
+        # On Lid Inner? (Visible when open)
+        # Verify orientation. Lid folds back. Top is "up".
+        # Text on Lid Panel.
+        svg.add_text(xc, (lid_y_top + lid_y_bot)/2, params['text_top'], font_size=8, mode="ENGRAVE")
+
+    svg.save()
+    return True
+
 def get_bool(prompt):
     val = input(f"{prompt} (y/n) [n]: ").lower()
     return val == 'y'
@@ -456,7 +742,7 @@ def run_examples():
     # Example 1: Standard Box
     p1 = {
         'S': 100, 'H': 80, 't': 3,
-        'stock_w': 600, 'stock_h': 400,
+        'stock_w': 600, 'stock_h': 600,
         'tab_width': 15, 'tab_depth': 10,
         'include_logo': True, 'include_fractal': False,
         'text_top': "Ex1 Top", 'text_front': "Front"
@@ -480,13 +766,21 @@ def run_examples():
     # Example 4: Rectangle
     generate_rectangle_svg(50, 25, "example4_rectangle.svg")
     
+    # Mailer Example
+    p_mail = p1.copy()
+    p_mail['S'] = 150
+    p_mail['H'] = 50
+    p_mail['text_top'] = "Mailer Box"
+    generate_mailer_box_svg(p_mail, "example_mailer.svg")
+    
     print("Examples generated.")
 
 def main():
     print("=== Parametric Box Generator ===")
     print("1. Generate Rectangle SVG (Task 1)")
-    print("2. Generate Box SVGs")
-    print("3. Run Example Suite")
+    print("2. Generate Box SVGs (Standard Open Bin)")
+    print("3. Generate Mailer Box SVG (FEFCO 0427)")
+    print("4. Run Example Suite")
     
     choice = input("Select > ")
     
@@ -526,9 +820,21 @@ def main():
             generate_divider_svg(params, "divider_square.svg")
             
     elif choice == '3':
+        params = {}
+        params['stock_w'] = get_float("Stock Width", 600)
+        params['stock_h'] = get_float("Stock Height", 600) # Need more height for mailer
+        params['t'] = get_float("Thickness t", 3.0)
+        params['S'] = get_float("Side S", 150.0)
+        params['H'] = get_float("Height H", 50.0)
+        params['text_top'] = input("Text on Lid [enter for none]: ")
+        
+        generate_mailer_box_svg(params, "mailer_box.svg")
+        
+    elif choice == '4':
         run_examples()
     else:
         print("Invalid choice.")
+
 
 if __name__ == "__main__":
     main()
