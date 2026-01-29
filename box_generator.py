@@ -162,8 +162,8 @@ def generate_box_svg(params, filename="box_square.svg"):
     # Layout Calculation
     max_row_h = H
     total_w_row1 = parts['Front']['w'] + parts['Back']['w'] + parts['Left']['w'] + parts['Right']['w'] + 4*margin
-    
-    # If row1 is too wide, split into 2 rows.
+    # Row 1: Front, Back
+    # Row 2: Left, Right, Base, Divider?
     
     x_cursor = margin
     y_cursor = margin
@@ -194,13 +194,29 @@ def generate_box_svg(params, filename="box_square.svg"):
     # Base
     parts['Base']['x'] = x_cursor
     parts['Base']['y'] = y_cursor
+    x_cursor += parts['Base']['w'] + margin
+
+    # Divider
+    if 'Divider' in parts:
+        parts['Divider']['x'] = x_cursor
+        parts['Divider']['y'] = y_cursor
+        # Check stock width
+        if x_cursor + parts['Divider']['w'] > stock_w:
+            # Move to Row 3 if needed
+            x_cursor = margin
+            y_cursor += max(parts['Base']['h'], parts['Left']['h']) + margin # This should be max height of previous row
+            parts['Divider']['x'] = x_cursor
+            parts['Divider']['y'] = y_cursor
+            
+    # Check Layout Bounds
+    max_x = 0
+    max_y = 0
+    for p in parts.values():
+        max_x = max(max_x, p['x'] + p['w'])
+        max_y = max(max_y, p['y'] + p['h'])
     
-    # Check Layout
-    total_w_used = max(parts['Back']['x'] + parts['Back']['w'], parts['Base']['x'] + parts['Base']['w']) + margin
-    total_h_used = y_cursor + S + margin
-     
-    if total_w_used > stock_w or total_h_used > stock_h:
-        print(f"Error: Layout size ({total_w_used:.1f} x {total_h_used:.1f} mm) larger than stock ({stock_w} x {stock_h} mm).")
+    if max_x + margin > stock_w or max_y + margin > stock_h:
+        print(f"Error: Layout size ({max_x+margin:.1f} x {max_y+margin:.1f} mm) larger than stock ({stock_w} x {stock_h} mm).")
         return False
         
     svg = SVGGenerator(filename, stock_w, stock_h)
@@ -302,11 +318,6 @@ def generate_box_svg(params, filename="box_square.svg"):
     if params.get('text_top'):
         svg.add_text(bx + bw/2, by + bh/2, params['text_top'], font_size=8, mode="ENGRAVE")
 
-    # 2. Front (S+2t x H)
-    # Location: Below Base? No, we set layout earlier.
-    fx, fy = parts['Front']['x'], parts['Front']['y']
-    fw, fh = parts['Front']['w'], parts['Front']['h']
-    
     # Edge Logic for Front/Back (Bottom):
     # Base fits INSIDE the walls.
     # Base has Tabs (Parity 1) on all sides.
@@ -325,6 +336,11 @@ def generate_box_svg(params, filename="box_square.svg"):
         svg.add_line(px+t+S, p_y_bot, px+t+S+t, p_y_bot, "CUT")
 
 
+    # 2. Front (S+2t x H)
+    # Location: Below Base? No, we set layout earlier.
+    fx, fy = parts['Front']['x'], parts['Front']['y']
+    fw, fh = parts['Front']['w'], parts['Front']['h']
+    
     # Front Wall Draw
     # Top: Flat
     svg.add_line(fx, fy, fx+fw, fy, "CUT")
@@ -341,8 +357,7 @@ def generate_box_svg(params, filename="box_square.svg"):
         # Slot center x
         slot_cx = fx + t + S * pos_ratio
         
-        # Draw central vertical slot of length H/2.
-        
+        # Slot dimensions (H/2 height, t width) centered vertically relative to H
         slot_h_cut = H / 2
         slot_y_start = fy + (H - slot_h_cut)/2
         
@@ -395,6 +410,7 @@ def generate_box_svg(params, filename="box_square.svg"):
     draw_finger_edge(lx, ly+lh, lx, ly, t, -1, "CUT")       # Left Side (Matches Back Right 1)
 
 
+    # 5. Right Side Wall
     rx, ry = parts['Right']['x'], parts['Right']['y']
     rw, rh = parts['Right']['w'], parts['Right']['h']
     
@@ -402,33 +418,73 @@ def generate_box_svg(params, filename="box_square.svg"):
     draw_finger_edge(rx+rw, ry, rx+rw, ry+rh, t, -1, "CUT")
     draw_finger_edge(rx+rw, ry+rh, rx, ry+rh, t, -1, "CUT")
     draw_finger_edge(rx, ry+rh, rx, ry, t, -1, "CUT")
+    
+    # 6. Divider (if enabled)
+    if 'Divider' in parts:
+        dx, dy = parts['Divider']['x'], parts['Divider']['y']
+        dw, dh = parts['Divider']['w'], parts['Divider']['h'] # Total W, H
+        
+        # Logic from generate_divider_svg (Tabbed)
+        clearance = 0.5
+        body_w = S - clearance
+        body_h = H - t - clearance
+        
+        tab_h = (H / 2) - clearance
+        tab_w = t
+        
+        #
+        
+        # Vertical Alignment: 
+        # Wall Slot Start (from Top 0): H/4.
+        # Divider Top (flush with Wall Top).
+        # So Divider Tab Start (from Top 0): H/4 + clearance/2.
+        
+        slot_y_start_rel = (H - (H/2)) / 2 # H/4
+        tab_y_start_rel = slot_y_start_rel + (clearance / 2)
+        tab_y_end_rel = tab_y_start_rel + tab_h
+        
+        # Origin (Top-Left of Body, not total). 
+        # Let's map points relative to dx, dy (Top Left of Total Bounding Box).
+        # Total Box: x=dx, y=dy.
+        # Body X: dx + tab_w.
+        # Body Y: dy (Flush Top? No, Divider height is H - t - clearance). 
+        # Wall Slot is centered on H. Divider should sit on Base (at H-t).
+        # But we want divider flush with TOP.
+        # So Divider Top = Wall Top.
+        # So Divider Body Y = dy.
+        
+        ox = dx + tab_w
+        oy = dy
+        
+        # Points Logic (Clockwise from Top-Left of Body)
+        # 1. Top Edge
+        svg.add_line(ox, oy, ox + body_w, oy, "CUT")
+        
+        # 2. Right Side Upper
+        svg.add_line(ox + body_w, oy, ox + body_w, oy + tab_y_start_rel, "CUT")
+        
+        # 3. Right Tab
+        svg.add_line(ox + body_w, oy + tab_y_start_rel, ox + body_w + tab_w, oy + tab_y_start_rel, "CUT") # Out
+        svg.add_line(ox + body_w + tab_w, oy + tab_y_start_rel, ox + body_w + tab_w, oy + tab_y_end_rel, "CUT") # Down
+        svg.add_line(ox + body_w + tab_w, oy + tab_y_end_rel, ox + body_w, oy + tab_y_end_rel, "CUT") # Back
+        
+        # 4. Right Side Lower
+        svg.add_line(ox + body_w, oy + tab_y_end_rel, ox + body_w, oy + body_h, "CUT")
+        
+        # 5. Bottom Edge
+        svg.add_line(ox + body_w, oy + body_h, ox, oy + body_h, "CUT")
+        
+        # 6. Left Side Lower
+        svg.add_line(ox, oy + body_h, ox, oy + tab_y_end_rel, "CUT")
+        
+        # 7. Left Tab
+        svg.add_line(ox, oy + tab_y_end_rel, ox - tab_w, oy + tab_y_end_rel, "CUT") # Out (Left)
+        svg.add_line(ox - tab_w, oy + tab_y_end_rel, ox - tab_w, oy + tab_y_start_rel, "CUT") # Up
+        svg.add_line(ox - tab_w, oy + tab_y_start_rel, ox, oy + tab_y_start_rel, "CUT") # Back
+        
+        # 8. Left Side Upper
+        svg.add_line(ox, oy + tab_y_start_rel, ox, oy, "CUT")
 
-    svg.save()
-    return True
-
-def generate_divider_svg(params, filename="divider_square.svg"):
-    """Generates a simple rectangular divider insert."""
-    """Generates a simple rectangular divider insert."""
-    # Loose insert sized S-clearance x H-clearance.
-    
-    S = params['S']
-    H = params['H']
-    t = params['t'] # not used for dim, but thick
-    
-    clearance = 0.5
-    div_w = S - 2*t - clearance # Fits inside Inner S?
-    # Wait, Inner Dim is S. Walls are outside base.
-    # So Inner Box is S x S.
-    # Divider Width = S - clearance.
-    
-    div_w = S - clearance
-    div_h = H - clearance # Flush with top?
-    
-    stock_w = params['stock_w']
-    stock_h = params['stock_h']
-    
-    svg = SVGGenerator(filename, stock_w, stock_h)
-    svg.add_rect(stock_w/2 - div_w/2, stock_h/2 - div_h/2, div_w, div_h, "CUT")
     svg.save()
     return True
 
@@ -498,10 +554,10 @@ def main():
         
         print("\n-- Dimensions --")
         params['S'] = get_float("Box Side Length S (mm) [Inner]", 100.0)
-        params['H'] = get_float("Box Height H (mm)", 60.0)
+        params['H'] = get_float("Box Height H (mm)", params['S'])
         
         print("\n-- Features --")
-        do_div = get_bool("Include Divider Insert?")
+        do_div = input("Include Divider Insert? (y/n) [y]: ").lower() != 'n'
         if do_div:
             params['divider_pos'] = get_float("Divider Position Ratio (0.0-1.0, 0.5=Center)", 0.5)
         
@@ -530,8 +586,6 @@ def main():
         success = generate_box_svg(params, "box_acrylic_parts.svg")
         
         if success:
-            if do_div:
-                generate_divider_svg(params, "box_divider.svg")
             print_software_description(params)
             
     else:
