@@ -6,6 +6,7 @@ It runs as a CLI and produces clean, compliant SVG files.
 
 import math
 import os
+import base64
 
 # --- Constants ---
 
@@ -47,6 +48,18 @@ class SVGGenerator:
         self.add_line(x + w, y + h, x, y + h, mode)
         self.add_line(x, y + h, x, y, mode)
 
+    def add_image(self, x, y, w, h, href, mode="ENGRAVE"):
+        """Adds an image tag."""
+        img_str = f'<image x="{x:.4f}" y="{y:.4f}" width="{w:.4f}" height="{h:.4f}" href="{href}" xlink:href="{href}" />'
+        if mode in self.groups:
+            self.groups[mode].append(img_str)
+
+    def add_circle(self, cx, cy, r, mode="CUT"):
+        """Adds a circle."""
+        circle_str = f'<circle cx="{cx:.4f}" cy="{cy:.4f}" r="{r:.4f}" />'
+        if mode in self.groups:
+            self.groups[mode].append(circle_str)
+
     def add_polyline(self, points, mode="ENGRAVE"):
         """Adds a polyline from a list of (x,y) tuples."""
         if not points:
@@ -72,7 +85,8 @@ class SVGGenerator:
             f.write('<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n')
             f.write(f'<svg width="{self.width}{self.unit}" height="{self.height}{self.unit}" '
                     f'viewBox="0 0 {self.width} {self.height}" '
-                    f'xmlns="http://www.w3.org/2000/svg">\n')
+                    f'xmlns="http://www.w3.org/2000/svg" '
+                    f'xmlns:xlink="http://www.w3.org/1999/xlink">\n')
             
             # Write Groups
             # CUT
@@ -158,6 +172,51 @@ def generate_box_svg(params, filename="box_square.svg"):
     # 3. Side (S x H)
     parts['Left']  = {'w': S, 'h': H}
     parts['Right'] = {'w': S, 'h': H}
+
+    if 'divider_pos' in params:
+        parts['Divider'] = {'w': S, 'h': H}
+
+    
+    # --- Fractal Generator ---
+    def generate_sierpinski(cx, cy, size, depth=4):
+        """Generates a Sierpinski triangle centered at cx,cy."""
+        lines = []
+        # Triangle height h = size * sqrt(3)/2
+        h = size * math.sqrt(3) / 2
+        
+        # Vertices relative to center (centroid)
+        # Centroid is h/3 from base.
+        # Top vertex: (0, -2h/3)
+        # Bot Left: (-s/2, h/3)
+        # Bot Right: (s/2, h/3)
+        
+        # But let's define by top vertex (x, y) for recursion simpler?
+        # Let's stick to the previous implementation logic or similar.
+        # Top (ax, ay), Right (bx, by), Left (cx, cy)
+        
+        # Calculate vertices centered at cx, cy
+        # r = size / sqrt(3) is dist to vertex
+        r = size / math.sqrt(3)
+        
+        ax, ay = cx, cy - r
+        bx, by = cx + size/2, cy + r/2
+        cx_pt, cy_pt = cx - size/2, cy + r/2
+        
+        def sierpinski(p1, p2, p3, d):
+            if d == 0:
+                lines.append([p1, p2, p3, p1])
+            else:
+                # Midpoints
+                p12 = ((p1[0]+p2[0])/2, (p1[1]+p2[1])/2)
+                p23 = ((p2[0]+p3[0])/2, (p2[1]+p3[1])/2)
+                p31 = ((p3[0]+p1[0])/2, (p3[1]+p1[1])/2)
+                
+                sierpinski(p1, p12, p31, d-1)
+                sierpinski(p12, p2, p23, d-1)
+                sierpinski(p31, p23, p3, d-1)
+
+        sierpinski((ax, ay), (bx, by), (cx_pt, cy_pt), depth)
+        return lines
 
     # Layout Calculation
     max_row_h = H
@@ -298,13 +357,112 @@ def generate_box_svg(params, filename="box_square.svg"):
         svg.add_line(points[-1][0], points[-1][1], x2, y2, mode)
 
 
+
+    # --- Screw Logic M3 ---
+    screw_diam = 3.2 # M3 Clearance
+    screw_len_eff = 12 # Effective screw length for T-slot calcs
+    nut_w = 5.5      # M3 Square Nut Width
+    nut_h = 2.4      # M3 Square Nut Thickness (Depth of pocket)
+    nut_off = 8.0    # Distance from edge to Nut Center (Screw length needs to cover this + t)
+    
+    # Check if we are doing screws
+    do_screws = params.get('screws', False)
+    
+    def add_screw_hole(cx, cy):
+        # Circle approx
+        svg.add_circle(cx, cy, screw_diam/2, "CUT")
+        
+    def draw_t_slot(edge_x, edge_y, direction, mode="CUT"):
+        """
+        Draws a T-Slot for an M3 nut.
+        (edge_x, edge_y): Point on the component edge where screw enters.
+        direction: 'UP', 'DOWN', 'LEFT', 'RIGHT' (Direction pointing INTO the material).
+        """
+        # Distances relative to edge
+        # Screw Channel: diameter=screw_diam, length=nut_off - nut_h/2.
+        # Nut Pocket: Width=nut_w, Height=nut_h (cross).
+        # We draw the T Slot shape:
+        #      +-------+
+        #      |  Nut  |
+        #      +--   --+
+        #         | |
+        #         | | Screw Channel
+        #      ---   --- (Edge)
+        
+        dx, dy = 0, 0
+        rot = 0
+        if direction == 'UP': dy = -1; rot=90
+        elif direction == 'DOWN': dy = 1; rot=-90
+        elif direction == 'LEFT': dx = -1; rot=180
+        elif direction == 'RIGHT': dx = 1; rot=0
+        
+        # Center of Nut
+        cx = edge_x + dx * nut_off
+        cy = edge_y + dy * nut_off
+        
+        # Draw Screw Channel (Rect width d, len nut_off)
+        # We need to cut a slot from edge to nut.
+        # If 'RIGHT': x goes edge -> nut. y is center.
+        
+        # Helper to transform local (u, v) to global (x, y)
+        # u = along direction, v = perpendicular (right hand)
+        def transform(u, v):
+            if direction == 'RIGHT': return edge_x + u, edge_y + v
+            if direction == 'LEFT': return edge_x - u, edge_y - v
+            if direction == 'DOWN': return edge_x - v, edge_y + u
+            if direction == 'UP': return edge_x + v, edge_y - u
+            return edge_x, edge_y
+
+        # Slot Points (Clockwise)
+        # Start at Edge-Top of channel
+        pts = []
+        
+        # Channel Width half
+        cw = screw_diam / 2
+        # Nut Width half (Perpendicular)
+        nw = nut_w / 2
+        # Nut Depth half (Along screw)
+        nh = nut_h / 2
+        
+        dist_to_nut_front = nut_off - nh
+        dist_to_nut_back = nut_off + nh
+        
+        # 1. Edge Top of Channel
+        pts.append(transform(0, -cw))
+        # 2. Nut Front Top
+        pts.append(transform(dist_to_nut_front, -cw))
+        # 3. Nut Side Top
+        pts.append(transform(dist_to_nut_front, -nw))
+        # 4. Nut Back Top
+        pts.append(transform(dist_to_nut_back, -nw))
+        # 5. Nut Back Bot
+        pts.append(transform(dist_to_nut_back, nw))
+        # 6. Nut Side Bot
+        pts.append(transform(dist_to_nut_front, nw))
+        # 7. Nut Front Bot
+        pts.append(transform(dist_to_nut_front, cw))
+        # 8. Edge Bot of Channel
+        pts.append(transform(0, cw))
+        
+        # Close shape? No, T-slot is usually cut strictly inside.
+        # But this T-slot starts AT the edge. The edge line already exists.
+        # WE usually want to *interrupt* the edge line, or just cut the T-slot "on top".
+        # If we cut on top, the laser will pass twice on the opening. That's fine.
+        
+        # Draw Polyline
+        for i in range(len(pts)-1):
+            svg.add_line(pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1], mode)
+        # Close back to start? Use add_line to close if needed.
+        svg.add_line(pts[-1][0], pts[-1][1], pts[0][0], pts[0][1], mode)
+
+
     # --- Draw Parts ---
 
     # 1. Base (S x S)
-    # Parity: 1 (Tabs on all sides to stick out)
     bx, by = parts['Base']['x'], parts['Base']['y']
     bw, bh = parts['Base']['w'], parts['Base']['h']
     
+    # ... Draw fingers ...
     # Top (L->R): Parity 1
     draw_finger_edge(bx, by, bx+bw, by, t, 1, "CUT")
     # Right (T->B): Parity 1
@@ -314,9 +472,55 @@ def generate_box_svg(params, filename="box_square.svg"):
     # Left (B->T): Parity 1
     draw_finger_edge(bx, by+bh, bx, by, t, 1, "CUT")
     
+    # Screws on Base: 1 hole per side, centered.
+    if do_screws:
+        # Top
+        add_screw_hole(bx + bw/2, by + nut_off)
+        # Bottom
+        add_screw_hole(bx + bw/2, by + bh - nut_off)
+        # Left
+        add_screw_hole(bx + nut_off, by + bh/2)
+        # Right
+        add_screw_hole(bx + bw - nut_off, by + bh/2)
+
     # Engraving on Base
     if params.get('text_top'):
-        svg.add_text(bx + bw/2, by + bh/2, params['text_top'], font_size=8, mode="ENGRAVE")
+        text = params['text_top']
+        cx = bx + bw/2
+        cy = by + bh/2
+        
+        if text == "DIGITAL MANUFACTURING":
+            # Split into two lines
+            svg.add_text(cx, cy - 15, "DIGITAL", font_size=8, mode="ENGRAVE")
+            svg.add_text(cx, cy - 5, "MANUFACTURING", font_size=8, mode="ENGRAVE")
+        else:
+            svg.add_text(cx, cy - 10, text, font_size=8, mode="ENGRAVE")
+        
+    # Image on Base (Shield)
+    # Check if 'columbia_logo.svg' exists in output dir
+    shield_rel_path = "columbia_logo.svg"
+    shield_full_path = os.path.join("output", shield_rel_path)
+    if os.path.exists(shield_full_path):
+        # Embed as Base64 to ensure it shows in all viewers (avoid local file restrictions)
+        try:
+            with open(shield_full_path, "rb") as IMG:
+                shield_b64 = base64.b64encode(IMG.read()).decode('utf-8')
+                shield_href = f"data:image/svg+xml;base64,{shield_b64}"
+                
+                # Center below text
+                # Source is 1375 x 718 (~1.91 ratio).
+                # Double size: Width = 50mm. Height = 50 / 1.91 = 26.18mm.
+                img_w = 50.0
+                img_h = 26.2
+                img_x = bx + bw/2 - img_w/2
+                # Start image below the "MANUFACTURING" text (which is at cy-5).
+                # Text height is ~8mm.
+                # Let's put image at cy + 5
+                img_y = by + bh/2 + 5
+                
+                svg.add_image(img_x, img_y, img_w, img_h, shield_href, "ENGRAVE")
+        except Exception as e:
+            print(f"Warning: Failed to embed image: {e}")
 
     # Edge Logic for Front/Back (Bottom):
     # Base fits INSIDE the walls.
@@ -337,11 +541,10 @@ def generate_box_svg(params, filename="box_square.svg"):
 
 
     # 2. Front (S+2t x H)
-    # Location: Below Base? No, we set layout earlier.
     fx, fy = parts['Front']['x'], parts['Front']['y']
     fw, fh = parts['Front']['w'], parts['Front']['h']
     
-    # Front Wall Draw
+    # ... Draw Front ...
     # Top: Flat
     svg.add_line(fx, fy, fx+fw, fy, "CUT")
     # Sides: Mating with Left/Right Walls.
@@ -349,31 +552,31 @@ def generate_box_svg(params, filename="box_square.svg"):
     draw_wall_bottom_with_base_slots(fx, fy, fw, fh)       # Bottom
     draw_finger_edge(fx, fy+fh, fx, fy, t, 1, "CUT")       # Left Side (Up)
     
-    # Divider Slot (Vertical) on Front Wall
-    # Position is ratio along the Width (S).
-    if params.get('divider_pos') is not None:
-        # Front Wall Width is S+2t. The Inner S part is from fx+t to fx+t+S.
-        pos_ratio = params['divider_pos']
-        # Slot center x
-        slot_cx = fx + t + S * pos_ratio
+    if do_screws:
+        # Holes on Sides (to screw into Left/Right Walls).
+        # Left Side (enters Left Wall). X = t/2. Y = various.
+        # Right Side (enters Right Wall). X = Width - t/2.
         
-        # Slot dimensions (H/2 height, t width) centered vertically relative to H
-        slot_h_cut = H / 2
-        slot_y_start = fy + (H - slot_h_cut)/2
+        # Positions: Near Top (15mm) and Bottom (15mm from floor?).
+        hole_margin_y = 15
         
-        svg.add_rect(slot_cx - t/2, slot_y_start, t, slot_h_cut, "CUT")
+        # Left holes
+        add_screw_hole(fx + t/2, fy + hole_margin_y)
+        add_screw_hole(fx + t/2, fy + fh - hole_margin_y)
+        
+        # Right holes
+        add_screw_hole(fx + fw - t/2, fy + hole_margin_y)
+        add_screw_hole(fx + fw - t/2, fy + fh - hole_margin_y)
+        
+        # T-Slot at Bottom (to receive Base Screw)
+        # Center X. Direction UP.
+        draw_t_slot(fx + fw/2, fy + fh, 'UP')
 
-    # Logo on Front
-    if params.get('include_logo'):
-        cx_f = fx + fw/2
-        cy_f = fy + fh/2
-        svg.add_text(cx_f, cy_f - 4, "Columbia", font_size=6, mode="ENGRAVE")
-        svg.add_text(cx_f, cy_f + 4, "Digital Manufacturing", font_size=4, mode="ENGRAVE")
-    if params.get('text_front'):
-         svg.add_text(fx + fw/2, fy + fh/2 - 15, params['text_front'], font_size=6, mode="ENGRAVE")
+
+    # Divider Slot
 
 
-    # 3. Back Wall (Same as Front)
+    # 3. Back Wall
     bax, bay = parts['Back']['x'], parts['Back']['y']
     baw, bah = parts['Back']['w'], parts['Back']['h']
     
@@ -382,43 +585,94 @@ def generate_box_svg(params, filename="box_square.svg"):
     draw_wall_bottom_with_base_slots(bax, bay, baw, bah)          # Bottom
     draw_finger_edge(bax, bay+bah, bax, bay, t, 1, "CUT")         # Left
     
-    # Divider Slot on Back Wall
-    if params.get('divider_pos') is not None:
-        pos_ratio = params['divider_pos']
-        # Back is mirrored? Logic is same, X from Left is X from Left.
-        # If Divider is at 0.3 from Left (West).
-        # Front Wall: 0.3 from Left.
-        # Back Wall: 0.3 from Left (if viewed from outside).
-        # Inner S starts at t.
-        slot_cx = bax + t + S * pos_ratio
-        slot_h_cut = H / 2
-        slot_y_start = bay + (H - slot_h_cut)/2
-        svg.add_rect(slot_cx - t/2, slot_y_start, t, slot_h_cut, "CUT")
+    if do_screws:
+        # Same holes/slots as Front
+        hole_margin_y = 15
+        add_screw_hole(bax + t/2, bay + hole_margin_y)
+        add_screw_hole(bax + t/2, bay + bah - hole_margin_y)
+        add_screw_hole(bax + baw - t/2, bay + hole_margin_y)
+        add_screw_hole(bax + baw - t/2, bay + bah - hole_margin_y)
+        draw_t_slot(bax + baw/2, bay + bah, 'UP')
 
+    # Divider Slots (Applied to Front and Back)
+    if 'divider_pos' in params:
+        d_pos = params['divider_pos']
+        slot_w = t
+        slot_h = H / 2
+        slot_y_rel = H / 4
+        
+        # Front Slot
+        fx_center = fx + t + (S * d_pos)
+        svg.add_rect(fx_center - slot_w/2, fy + slot_y_rel, slot_w, slot_h, "CUT")
+        
+        # Back Slot
+        bx_center = bax + t + (S * d_pos)
+        svg.add_rect(bx_center - slot_w/2, bay + slot_y_rel, slot_w, slot_h, "CUT")
 
     # 4. Left Side Wall (S x H)
     lx, ly = parts['Left']['x'], parts['Left']['y']
     lw, lh = parts['Left']['w'], parts['Left']['h']
     
-    # Mates base at bottom. Mates Front/Back at sides.
-    # Bottom: Mates Base (Parity -1). Direct S length.
-    # Sides: Mates Front/Back (Parity 1). So L/R needs Parity -1.
-    
+    # ... Draw Left ...
     svg.add_line(lx, ly, lx+lw, ly, "CUT") # Top Flat
-    draw_finger_edge(lx+lw, ly, lx+lw, ly+lh, t, -1, "CUT") # Right Side (Matches Front Left 1)
-    draw_finger_edge(lx+lw, ly+lh, lx, ly+lh, t, -1, "CUT") # Bot Side (Matches Base 1)
-    draw_finger_edge(lx, ly+lh, lx, ly, t, -1, "CUT")       # Left Side (Matches Back Right 1)
+    draw_finger_edge(lx+lw, ly, lx+lw, ly+lh, t, -1, "CUT") # Right Side
+    draw_finger_edge(lx+lw, ly+lh, lx, ly+lh, t, -1, "CUT") # Bot Side
+    draw_finger_edge(lx, ly+lh, lx, ly, t, -1, "CUT")       # Left Side
+    
+    if do_screws:
+        # T-Slots on Vertical Edges (to receive Front/Back screws)
+        hole_margin_y = 15
+        # Left Edge: Receives from Back Wall? 
+        # Wait, Front/Back cover Left/Right.
+        # So Front/Back have holes. Left/Right have T-Slots.
+        # Left Wall Left Edge: Mates with Back Wall Right Edge.
+        # Left Wall Right Edge: Mates with Front Wall Left Edge.
+        
+        # Left Edge (Back Mating): Direction RIGHT (Into material)
+        draw_t_slot(lx, ly + hole_margin_y, 'RIGHT')
+        draw_t_slot(lx, ly + lh - hole_margin_y, 'RIGHT')
+        
+        # Right Edge (Front Mating): Direction LEFT (Into material)
+        draw_t_slot(lx + lw, ly + hole_margin_y, 'LEFT')
+        draw_t_slot(lx + lw, ly + lh - hole_margin_y, 'LEFT')
+        
+        # Bottom Edge: Receives Base Screw. Direction UP.
+        draw_t_slot(lx + lw/2, ly + lh, 'UP')
 
 
     # 5. Right Side Wall
     rx, ry = parts['Right']['x'], parts['Right']['y']
     rw, rh = parts['Right']['w'], parts['Right']['h']
     
+    # ... Draw Right ...
     svg.add_line(rx, ry, rx+rw, ry, "CUT")
     draw_finger_edge(rx+rw, ry, rx+rw, ry+rh, t, -1, "CUT")
     draw_finger_edge(rx+rw, ry+rh, rx, ry+rh, t, -1, "CUT")
     draw_finger_edge(rx, ry+rh, rx, ry, t, -1, "CUT")
     
+    if do_screws:
+        half_h = 15 # margin
+        # Left Edge: Direction RIGHT
+        draw_t_slot(rx, ry + half_h, 'RIGHT')
+        draw_t_slot(rx, ry + rh - half_h, 'RIGHT')
+        # Right Edge: Direction LEFT
+        draw_t_slot(rx + rw, ry + half_h, 'LEFT')
+        draw_t_slot(rx + rw, ry + rh - half_h, 'LEFT')
+        # Bottom: Direction UP
+        draw_t_slot(rx + rw/2, ry + rh, 'UP')
+        
+    # Fractal on Right Wall (Side without Slide/Divider slots)
+    if params.get('fractal'):
+        # Center of Right Wall
+        frac_cx = rx + rw/2
+        frac_cy = ry + rh/2
+        # Size: 60% of min dimension
+        frac_size = min(rw, rh) * 0.6
+        
+        triangles = generate_sierpinski(frac_cx, frac_cy, frac_size, 4)
+        for tri in triangles:
+            svg.add_polyline(tri, "ENGRAVE")
+
     # 6. Divider (if enabled)
     if 'Divider' in parts:
         dx, dy = parts['Divider']['x'], parts['Divider']['y']
@@ -427,7 +681,9 @@ def generate_box_svg(params, filename="box_square.svg"):
         # Logic from generate_divider_svg (Tabbed)
         clearance = 0.5
         body_w = S - clearance
-        body_h = H - t - clearance
+        # To touch bottom (Base), Height should be H - t.
+        # Originally was H - t - clearance.
+        body_h = H - t
         
         tab_h = (H / 2) - clearance
         tab_w = t
@@ -557,13 +813,20 @@ def main():
         params['H'] = get_float("Box Height H (mm)", params['S'])
         
         print("\n-- Features --")
+        # Default Divider to Yes
         do_div = input("Include Divider Insert? (y/n) [y]: ").lower() != 'n'
         if do_div:
             params['divider_pos'] = get_float("Divider Position Ratio (0.0-1.0, 0.5=Center)", 0.5)
+            
+        do_screws = input("Add M3 T-Slot Screw Reinforcement? (y/n) [n]: ").lower() == 'y'
+        params['screws'] = do_screws
+        
+        do_fractal = input("Engrave Fractal on Side Wall? (y/n) [y]: ").lower() != 'n'
+        params['fractal'] = do_fractal
         
         print("\n-- Engraving --")
         # Default Base Text
-        default_base_text = "Digital Manufacturing"
+        default_base_text = "DIGITAL MANUFACTURING"
         t_top = input(f"Text on Base [{default_base_text}]: ")
         params['text_top'] = t_top if t_top else default_base_text
         
