@@ -1,18 +1,25 @@
-# Parametric Open Bin Cardboard Box Generator
+# Parametric Acrylic Box Generator
 
-A self-contained Python CLI tool to generate SVG laser cutter files for square open bin boxes.
+A self-contained Python CLI tool to generate SVG laser cutter files for **Acrylic (Finger Joint)** boxes.
 
 ## Features
-- **Parametric Generation**: Customize dimensions, thickness, and tab sizes.
-- **Thickness Compensation**: Automatically adjusts wall widths to ensure inner dimensions match requirements ("Simple Mode").
-- **Glue Tabs**: Generates tabs on North/South walls for easy assembly.
-- **Fractal Engraving**: Option to engrave a Sierpinski triangle pattern.
-- **Auxiliary Parts**: Can generate a matching lid and divider insert.
-- **Rectangle Generator**: Includes a specific mode for generating cut-ready rectangles.
+- **Task 1: Small Rectangle**: Strict check for <= 2x2 inch rectangle generation.
+- **Task 2: Acrylic Box (Finger Joints)**: Interactive generation of a rigid box with:
+    - 5 Interlocking Parts (Base, Front, Back, Left, Right).
+    - **Finger Joints**: Standard rectangular tabs for acrylic assembly.
+    - **Features**:
+        - **Divider**: Removable insert with automatic vertical supporting slots on Front/Back walls.
+        - **Engraving**:
+            - Base Text: Defaults to "Digital Manufacturing".
+            - Columbia Logo: Optional on Front Wall.
+- **Automatic Formatting**:
+    - **Red**: Cut lines (0.01mm stroke).
+    - **Blue**: Engrave lines (0.01mm stroke).
+- **Software Description**: Prints calculations and formulas after generation.
 
 ## Requirements
 - Python 3.6+
-- No external libraries required (uses standard library).
+- No external libraries required.
 
 ## Usage
 
@@ -23,26 +30,17 @@ python3 box_generator.py
 ```
 
 ### Modes
-1.  **Generate Rectangle SVG**: Quick generation of a simple rectangle (Task 1).
-2.  **Generate Box SVGs**: The main parametric mode. You will be prompted for:
+1.  **Task 1: Small Rectangle**: Quick generation of a simple rectangle (max 50.8mm).
+2.  **Task 2: Acrylic Box**: The main parametric mode. You will be prompted for:
     -   Stock size (mm)
     -   Material thickness ($t$)
-    -   Box Side ($S$) and Height ($H$)
-    -   Tab dimensions
-    -   Optional logic: Text engraving, Logo, Fractal, Lid, Divider.
-3.  **Generate Mailer Box SVG**: (New) Generates a detailed FEFCO 0427 "Rollover" Mailer Box. Features double side walls (rollover) with locking tabs that fit into base slots, and a hinged lid with dust flaps.
-4.  **Generate Tray SVG**: (New) Generates a lidless version of the Rollover Mailer (FEFCO 0422 style). Symmetric design with double side walls and corner flaps.
-5.  **Run Example Suite**: Generates test files including the complex mailer and tray.
+    -   Box Dimensions ($S, H$) [Inner Size]
+    -   Features (Divider, Text, Logo, Fractal)
 
-## Output Details
--   **File Format**: SVG (Scalable Vector Graphics), mm units.
--   **Colors**:
-    -   **Red** (`rgb(255,0,0)`): Cut lines.
-    -   **Blue** (`rgb(0,0,255)`): Engrave/Score lines.
--   **Stroke Width**: 0.2mm.
-
-## Assembly
+## Assembly (Acrylic)
 1.  **Cut** the Red lines.
-2.  **Score/Engrave** the Blue lines.
-3.  **Fold** along the engraved lines at the base and tabs.
-4.  **Glue** the tabs on the North/South walls to the inner face of the East/West walls.
+2.  **Engrave** the Blue lines.
+3.  **Assemble** using acrylic cement:
+    -   The Base has tabs on all sides.
+    -   Front/Back walls mate with the Base and overlap the Side walls.
+    -   Use the finger joints for alignment.

@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
 """
-Parametric Open Bin Cardboard Box Generator
-Author: Antigravity (Google Deepmind)
-
 This program generates SVG laser cutter files for a square open bin box.
 It runs as a CLI and produces clean, compliant SVG files.
 """
@@ -94,42 +91,7 @@ class SVGGenerator:
         print(f"Successfully generated: {self.filename}")
 
 
-# --- Fractal Generator ---
 
-def generate_sierpinski(x, y, size, depth=4):
-    """Generates a Sierpinski triangle as a list of independent triangles (polylines).
-    Returns a list of list of points (list of polylines).
-    """
-    lines = []
-
-    def sierpinski(ax, ay, bx, by, cx, cy, d):
-        if d == 0:
-            # Add this triangle
-            lines.append([(ax, ay), (bx, by), (cx, cy), (ax, ay)])
-        else:
-            # Midpoints
-            abx, aby = (ax + bx) / 2, (ay + by) / 2
-            bcx, bcy = (bx + cx) / 2, (by + cy) / 2
-            cax, cay = (cx + ax) / 2, (cy + ay) / 2
-            
-            sierpinski(ax, ay, abx, aby, cax, cay, d - 1)
-            sierpinski(abx, aby, bx, by, bcx, bcy, d - 1)
-            sierpinski(cax, cay, bcx, bcy, cx, cy, d - 1)
-
-    # Calculate vertices of the main equilateral triangle fitting in the box (x,y, size)
-    # Height of equilateral triangle = size * sqrt(3)/2
-    h_tri = size * math.sqrt(3) / 2
-    
-    # Vertices relative to (x,y) being top-left of the bounding box
-    # Bottom Left
-    p1x, p1y = x, y + h_tri
-    # Bottom Right
-    p2x, p2y = x + size, y + h_tri
-    # Top Center
-    p3x, p3y = x + size / 2, y
-
-    sierpinski(p1x, p1y, p2x, p2y, p3x, p3y, depth)
-    return lines
 
 
 # --- Geometry Functions ---
@@ -160,267 +122,582 @@ def generate_rectangle_svg(width_mm, height_mm, filename="rectangle.svg"):
 
 
 def generate_box_svg(params, filename="box_square.svg"):
-    """Generates the main box layout."""
+    """Generates the acrylic finger-joint box layout."""
     # Unpack params
-    S_inner = params['S']
-    H_inner = params['H']
+    S = params['S']
+    H = params['H']
     t = params['t']
     stock_w = params['stock_w']
     stock_h = params['stock_h']
+
+    # --- New Finger Joint Logic ---
+
+    # We need to draw 5 parts: Base, Front, Back, Left, Right.
+    # Layout Strategy:
+    # Row 1: Left, Front, Right, Back (Walls laid out in a strip? No, optimization isn't critical but clarity is.)
+    # Let's do:
+    # Base in center? Or simple grid.
+    # Base (S x S)
+    # Front (S x H)
+    # Back (S x H)
+    # Left (S x H)
+    # Right (S x H)
     
-    # Thickness Compensation ("Simple" Mode Strategy):
-    # Base Panel: S x S (Inner dimensions).
-    # North/South Walls (Front/Back): Width S. Attached to Base.
-    # East/West Walls (Left/Right): Width S + 2t. Attached to Base.
-    # This configuration ensures that when folded, the North/South walls 
-    # sit between the East/West walls, maintaining the inner dimension S.
+    # Margin between parts
+    margin = 5
     
-    base_w = S_inner
-    base_h = S_inner
+    # Calculate Part Origins (Top-Left of each part's bounding box)
+    # Base:
+    # Side length S.
+    # Walls have thickness t. 
+    # To interlock:
+    # Base is S x S inner? 
+    # A standard finger joint box usually defines OUTSIDE dimensions or INSIDE.
+    # If S is INSIDE:
+    # Base Width = S + (2*t if joints overlap).
+    # Actually, simpler: 
+    # Base = S x S.
+    # Front/Back sit ON SIDE of Base? Or Base sits inside?
+    # Common sturdy design: Base is "caught" by walls. 
+    # Sides overlap Base -> Base size is S x S. 
+    # Front/Back Width = S + 2*t. Height = H.
+    # Left/Right Width = S. Height = H.
+    # Wait, if Front/Back overlap Left/Right corners?
+    # Let's assume standard "pinwheel" or "symmetric" corners for simplicity?
+    # Or "Front/Back overlap Left/Right".
+    # Case: Front/Back Width = S + 2*t. Left/Right Width = S.
+    # Base Width along Front/Back = S. (Tabs insert into F/B faces).
+    # Base Depth along Left/Right = S. (Tabs insert into L/R faces).
     
-    # Walls
-    wall_ns_w = S_inner
-    wall_ns_h = H_inner
+    # Dimensions:
+    # Base: S x S (with tabs sticking OUT).
+    # Front/Back: (S + 2t) x H. Slots for Base. Slots for Side Walls.
+    # Left/Right: S x H. Slots for Base. Tabs for Front/Back.
     
-    wall_ew_w = S_inner + 2 * t
-    wall_ew_h = H_inner
+    # Parts List with Sizes (W, H)
+    parts = {}
     
-    # Tabs
-    tab_w = params.get('tab_width', 20)
-    tab_d = params.get('tab_depth', 15)
+    # 1. Base (S x S)
+    parts['Base'] = {'w': S, 'h': S}
     
-    # Layout Check
-    # Total Width = West_H + Base_W + East_H = H + S + H
-    # Total Height = North_H + Base_H + South_H = H + S + H
+    # 2. Front (S+2t x H)
+    parts['Front'] = {'w': S + 2*t, 'h': H}
+    parts['Back']  = {'w': S + 2*t, 'h': H}
     
-    total_layout_w = wall_ew_h + base_w + wall_ew_h
-    total_layout_h = wall_ns_h + base_h + wall_ns_h
+    # 3. Side (S x H)
+    parts['Left']  = {'w': S, 'h': H}
+    parts['Right'] = {'w': S, 'h': H}
+
+    # Layout Calculation
+    max_row_h = H
+    total_w_row1 = parts['Front']['w'] + parts['Back']['w'] + parts['Left']['w'] + parts['Right']['w'] + 4*margin
     
-    if total_layout_w > stock_w or total_layout_h > stock_h:
-        print(f"Error: Layout size ({total_layout_w:.1f} x {total_layout_h:.1f} mm) larger than stock ({stock_w} x {stock_h} mm).")
+    # If row1 is too wide, split.
+    # Let's do 2 Rows:
+    # Row 1: Front, Back
+    # Row 2: Left, Right, Base
+    
+    x_cursor = margin
+    y_cursor = margin
+    
+    # Front
+    parts['Front']['x'] = x_cursor
+    parts['Front']['y'] = y_cursor
+    x_cursor += parts['Front']['w'] + margin
+    
+    # Back
+    parts['Back']['x'] = x_cursor
+    parts['Back']['y'] = y_cursor
+    
+    # Next Row
+    y_cursor += H + margin
+    x_cursor = margin
+    
+    # Left
+    parts['Left']['x'] = x_cursor
+    parts['Left']['y'] = y_cursor
+    x_cursor += parts['Left']['w'] + margin
+    
+    # Right
+    parts['Right']['x'] = x_cursor
+    parts['Right']['y'] = y_cursor
+    x_cursor += parts['Right']['w'] + margin
+    
+    # Base
+    parts['Base']['x'] = x_cursor
+    parts['Base']['y'] = y_cursor
+    
+    # Check Layout
+    total_w_used = max(parts['Back']['x'] + parts['Back']['w'], parts['Base']['x'] + parts['Base']['w']) + margin
+    total_h_used = y_cursor + S + margin
+     
+    if total_w_used > stock_w or total_h_used > stock_h:
+        print(f"Error: Layout size ({total_w_used:.1f} x {total_h_used:.1f} mm) larger than stock ({stock_w} x {stock_h} mm).")
         return False
         
     svg = SVGGenerator(filename, stock_w, stock_h)
     
-    # Center the layout
-    cx = stock_w / 2
-    cy = stock_h / 2
+    # Finger parameters
+    tab_size = 10 # nominal 10mm tabs
     
-    # Coordinates for Base
-    bx = cx - base_w / 2
-    by = cy - base_h / 2
-    
-    # 1. Base (S x S) - Central region with folds.
-    # Top Fold (Base-North)
-    svg.add_line(bx, by, bx + base_w, by, mode="ENGRAVE") 
-    # Bottom Fold (Base-South)
-    svg.add_line(bx, by + base_h, bx + base_w, by + base_h, mode="ENGRAVE")
-    
-    # --- North Wall (Top) ---
-    # Attached to Base Top Edge (by).
-    
-    # Helper to draw tab on vertical edge
-    # x, y1, y2, direction (+1 for right, -1 for left)
-    def draw_tab_vertical(vx, vy1, vy2, direction):
-        # Center the tab
-        h_edge = abs(vy2 - vy1)
-        curr_tab_d = min(tab_d, h_edge) # Depth
-        curr_tab_w = min(tab_w, h_edge) # Width along edge
-        
-        # Inset
-        inset = (h_edge - curr_tab_w) / 2
-        
-        # Points for trapezoidal tab
-        p1 = (vx, vy1)
-        p2 = (vx, vy1 + inset)
-        chamfer = 3
-        p3 = (vx + direction * curr_tab_d, vy1 + inset + chamfer)
-        p4 = (vx + direction * curr_tab_d, vy2 - inset - chamfer)
-        p5 = (vx, vy2 - inset)
-        p6 = (vx, vy2)
-        
-        # Draw the cut lines
-        svg.add_line(p1[0], p1[1], p2[0], p2[1], "CUT")
-        svg.add_line(p2[0], p2[1], p3[0], p3[1], "CUT")
-        svg.add_line(p3[0], p3[1], p4[0], p4[1], "CUT")
-        svg.add_line(p4[0], p4[1], p5[0], p5[1], "CUT")
-        svg.add_line(p5[0], p5[1], p6[0], p6[1], "CUT")
-        
-        # Add Fold Line where tab meets wall
-        svg.add_line(p2[0], p2[1], p5[0], p5[1], "ENGRAVE")
+    def draw_finger_edge(x1, y1, x2, y2, thickness, parity, mode="CUT"):
+        """
+        Draws a finger-jointed line from (x1, y1) to (x2, y2).
+        parity: 1 = start with TAB (stick out), -1 = start with SLOT (dent in).
+        Direction: currently horizontal or vertical only.
+        thickness: t (depth of tab/slot).
+        """
+        dx = x2 - x1
+        dy = y2 - y1
+        length = math.sqrt(dx*dx + dy*dy)
+        if length == 0: return
 
-    # North Wall Draw
-    # Top Edge:
-    svg.add_line(bx, by - wall_ns_h, bx + wall_ns_w, by - wall_ns_h, "CUT")
-    # Left Edge (with Leftward Tab)
-    draw_tab_vertical(bx, by - wall_ns_h, by, -1)
-    # Right Edge (with Rightward Tab)
-    draw_tab_vertical(bx + wall_ns_w, by - wall_ns_h, by, 1)
-    
-    # --- South Wall (Bottom) ---
-    # Attached to Base Bottom Edge (by + base_h).
-    bs_y = by + base_h
-    # Bottom Edge
-    svg.add_line(bx, bs_y + wall_ns_h, bx + wall_ns_w, bs_y + wall_ns_h, "CUT")
-    # Left Edge
-    draw_tab_vertical(bx, bs_y, bs_y + wall_ns_h, -1)
-    # Right Edge
-    draw_tab_vertical(bx + wall_ns_w, bs_y, bs_y + wall_ns_h, 1)
+        # Determine number of tabs
+        # ideally odd number to be symmetric? 
+        n_tabs = max(3, int(length // tab_size))
+        if n_tabs % 2 == 0: n_tabs += 1 # Ensure odd for symmetry
+        
+        actual_tab_w = length / n_tabs
+        
+        # Unit vector
+        ux = dx / length
+        uy = dy / length
+        # Normal vector (pointing 'out' relative to standard CCW traversal, but we just need perpendicular)
+        # For a horizontal line x1->x2 (ux=1, uy=0), 'out' is variable?
+        # Let's explicitly define 'out' as +90 deg or consistent based on parity?
+        # Simpler: 'parity=1' means the first segment sticks OUT to the 'Right' of the path vector.
+        
+        # Normal vector n = (-uy, ux) (Left turn)
+        # If parity=1 (Tab), we go OUT (Left of path?).
+        # Wait, usually for a box part boundary traversing CW:
+        # Tab sticks OUT (into neighbor's space).
+        # Slot cuts IN (into own space).
+        
+        nx = -uy
+        ny = ux
+        
+        # Points list
+        curr_x, curr_y = x1, y1
+        side = parity # 1 = Out, -1 = In
+        
+        # If we start with parity=1 (Tab), the first "edge" is extended OUT.
+        # Structure:
+        # [Segment along edge] -> [90deg Out] -> [Top of Tab] -> [90deg In] -> ...
+        # Actually standard finger joint:
+        # 0 to w: Edge
+        # w to 2w: Tab Top (at distance t)
+        # ...
+        # If parity=1 (Start with TAB):
+        # We start "UP" at t? Or start at 0 and go UP?
+        # "Start with Tab" usually means the first interval is a Tab.
+        # So we travel along the protruded line.
+        
+        points = [] # list of (x,y)
+        points.append((x1, y1))
+        
+        for i in range(n_tabs):
+            # Each segment is actual_tab_w long.
+            # State of this segment determined by side.
+            # side 1: Tab (Protruding).
+            # side -1: Slot (Recessed).
+            
+            # If we are side 1: We should be at distance 'thickness' from centerline?
+            # Or is the centerline the mating line? Yes.
+            # So Tab = (+nx*t, +ny*t). Slot = (-nx*t, -ny*t)? 
+            # OR Slot = (0,0) (on line) and Tab = (Out)?
+            # Usually: Line is the boundary.
+            # Tab sticks OUT -> Parity 1 -> Go Out, Move, Go In.
+            # Slot stays IN -> Parity -1 -> Stay on line (or cut IN?).
+            # "Finger Joint": Teeth cross the line. 
+            # Convention:
+            # 1 (Tab): The material EXISTS outside the line. Cut path goes OUT.
+            # -1 (Slot): The material is REMOVED inside the line. Cut path goes IN?
+            # Actually, if we just want "interlock", one part has tabs OUT, other has tabs OUT (offset).
+            # Let's define Parity 1 = Start with PROTRUSION (Tab).
+            # Parity -1 = Start with INDENTATION (Slot).
+            
+            # Start of segment i
+            p_start = (curr_x, curr_y)
+            p_end_center = (x1 + (i+1)*actual_tab_w*ux, y1 + (i+1)*actual_tab_w*uy)
+            
+            # Vector for protrusion
+            # if side == 1: displacement = +t * N
+            # if side == -1: displacement = 0 (if we consider standard edge as base) OR -t * N?
+            # Standard: Line is 0.
+            # Tab goes to +t. Slot goes to -t? No, usually one part has tabs 0..t, other 0..t?
+            # Mating: Part A (Tab) fills Part B (Slot).
+            # If A has Tab (+t), B must have Slot (space).
+            # Let's assume the "nominal edge" is the mating surface.
+            # Tab: Cut path is at +t.
+            # Slot: Cut path is at -t (or 0 if we subtract from stock?).
+            # Let's use symmetric crossing: Tabs go +t/2, Slots go -t/2? No.
+            # Robust: Line is geometric boundary.
+            # Tab: Go Out t, traverse, go In.
+            # Slot: Stay on line? And other part has Tabs?
+            # If Base is S x S and Front sits on side...
+            # Front needs SLOTS at bottom to accept Base TABS.
+            # Base needs TABS at edges.
+            
+            # Logic:
+            # Parity 1 (Tab): Line is at +thickness relative to (ux,uy) path?
+            # Wait, easier loop:
+            # We are at 'current level' (either 0 or t, or -t).
+            # Transition draw perpendicular?
+            
+            # Let's stick to: Line is '0'.
+            # Tab: Cut goes OUT (Left of vector) by 'thickness'.
+            # Slot: Cut goes IN (Right of vector) by 'thickness' ? Or stays at 0?
+            # If we want flush exterior:
+            # Base S x S.
+            # Front Bottom Edge: Needs to mate with Base Edge.
+            # If Base has Tabs sticking OUT (S -> S+2t), Front Bottom needs Slots sticking UP (indenting H).
+            # So "Slot" means Indent (Right of vector).
+            # "Tab" means Outdent (Left of vector).
+            
+            indent = thickness
+            
+            # Determine displacement for this segment
+            # side 1 -> Left (Out) -> disp = +indent * N
+            # side -1 -> Right (In) -> disp = -indent * N (or 0?)
+            # Usually strict box joint: One part goes 0..+t, other 0..-t?
+            # Let's use:
+            # Tab = displacement +t/2? No.
+            # Let's assume "Line" is the mean.
+            # Tab = Line + t (Left)
+            # Slot = Line (Recessed? No, that's partial).
+            # Slot = Line - t (Right) ? No, that eats into part.
+            # Yes, Slot removes material. Tab adds material.
+            # BUT: We need to respect the part's overall dimensions.
+            # Part dimensions defined by the "zero line".
+            # If Base is S x S. We want tabs to stick OUT of S. (Base total w ~ S+2t).
+            # Then Base edge parity = 1 (Start Tab). "Slot" segments are at 0. "Tab" segments at +t.
+            # Corresponding Wall: Edge parity = -1 (Start Slot). "Slot" segments at 0 (match Base Slot). "Tab" segments at -t (Indent to accept Base Tab).
+            # Wait, if Base has Tab at +t, Wall needs Slot at +t? No, Wall needs space.
+            # Wall has material. Slot REMOVES material.
+            # So Wall Slot should go IN (Right of vector).
+            # Does Wall start at '0' or 'S'?
+            # If Wall sits ON SIDE of Base...
+            
+            # SIMPLIFIED MODEL:
+            # Base (S x S) has TABS sticking OUT. (0 and +t). Parity = 1.
+            # Wall (Bottom Edge) has SLOTS cutting IN. (0 and +t relative to wall bottom up?). 
+            # Wall Bottom Edge Vector goes Right. Up is 'Left' (Into material). Down is 'Right' (Out).
+            # We want slots to cut UP (Into material, Left). 
+            # So Wall Slot = Left (+t). Wall Tab = 0.
+            # This matches Base!
+            # Base Tab (+t Out) meets Wall Slot (0? No).
+            # Mismatch.
+            
+            # Let's use explicit 'Tab' vs 'Inverse Tab'.
+            # Base Edge (Parity 1): Seg 1 is Tab (+t). Seg 2 is Base (0).
+            # Wall Edge (Parity -1): Seg 1 is Slot (Indent, so cut at +t into material? No, cut at +t allows Tab to enter? No).
+            # Wall mating edge:
+            # Needs to be the NEGATIVE of Base Edge.
+            # If Base Cut = Path P.
+            # Wall Cut = Path P (reversed?).
+            
+            # Let's just calculate the offset for the segment:
+            # Parity 1 (Protruding Tab Sequence): [Tab, Base, Tab, Base...]
+            #   - Tab: Offset = +thickness (Left/Out)
+            #   - Base: Offset = 0
+            # Parity -1 (Recessed Slot Sequence): [Slot, Wall, Slot, Wall...]
+            #   - Slot: Offset = 0 (Matches Base 'Base') ? No.
+            #   - Wall: Offset = +thickness (Matches Base 'Tab'?) No.
+            
+            # Correct Logic:
+            # Base Edge: [Tab (+t), Gap (0), Tab (+t)...]
+            # Mating Wall Edge: [Slot (open), Finger (solid), Slot...]
+            # Geometry must align.
+            # If Base Edge is at Y=0. Tab goes Y=-t (Out). Gap is Y=0.
+            # Wall Edge is at Y=0. Slot must be Y=0 (to accept Gap? No).
+            # Slot must allow Tab (Y=-t) to enter.
+            # So Wall edge must trace Y=-t and Y=0?
+            # Yes! The cut path is IDENTICAL for both parts, just one is "Solid below", one is "Solid above".
+            # So we just need to ensure the phases match.
+            # If Base starts with Tab (+t), Wall must start with Slot (Space for Tab).
+            # So Wall cut path matches Base cut path.
+            
+            # Draw Logic:
+            # We draw the path relative to the line (x1,y1)->(x2,y2).
+            # Parity 1: Starts at +t (Left). [ +t, 0, +t, 0 ]
+            # Parity -1: Starts at 0. [ 0, +t, 0, +t ] (Complementary)
+            
+            # Note: "Left" of vector (x1->x2).
+            # For Base Bottom edge (Right->Left): Left is Down (Out). Correct.
+            # For Wall Bottom edge (Left->Right): Left is Up (In). 
+            # If Wall Bottom has Parity -1 (Start 0).
+            # Seq: 0, +t (In), 0, +t (In).
+            # 0 aligns with Base Gap (0).
+            # +t (In) aligns with Base Tab (+t Out). (Since Base Out = Down, Wall In = Up. Perfect overlap?)
+            # Wait. Base Tab +t (Out/Down). Wall Slot +t (In/Up).
+            # They occupy the same space? No. Solid meets Space.
+            # Base is Solid "Above" cut. Wall is Solid "Above" cut.
+            # If cut goes Down (Away from Base), Base gets Tab.
+            # If cut goes Up (Into Wall), Wall gets Slot.
+            # So we just need consistent "Left" offset logic.
+            
+            current_offset_mag = thickness if side == 1 else 0
+            
+            # Calc start/end of this segment at the offset
+            seg_start_x = curr_x + (-uy * current_offset_mag) # Move Left
+            seg_start_y = curr_y + ( ux * current_offset_mag)
+            
+            seg_end_x = p_end_center[0] + (-uy * current_offset_mag)
+            seg_end_y = p_end_center[1] + ( ux * current_offset_mag)
+            
+            # If this is not the first point, adding a perpendicular connector from previous
+            if i > 0:
+                svg.add_line(points[-1][0], points[-1][1], seg_start_x, seg_start_y, mode)
+                
+            # If first point and offset is non-zero, we surely need to connect from x1,y1?
+            # Actually we usually start FROM the corner.
+            # If Parity 1 (Start Tab +t): Do we start at corner or corner+t?
+            # Corner is part dimension.
+            # Base S x S.
+            # Corner is at 0. Tab starts at corner?
+            # Yes, corner is inside the tab? Or tab starts after corner?
+            # Standard: Corner IS part of a tab (stronger).
+            # So we start at (x1,y1) + offset.
+            # But the "Line" starts at x1,y1.
+            # So we need to draw (x1,y1) -> Start.
+            if i == 0:
+                 svg.add_line(x1, y1, seg_start_x, seg_start_y, mode)
+            
+            # Add segment
+            svg.add_line(seg_start_x, seg_start_y, seg_end_x, seg_end_y, mode)
+            points.append((seg_end_x, seg_end_y))
+            
+            # Flip side for next segment
+            side = -side
+            curr_x, curr_y = p_end_center[0], p_end_center[1]
+            
+        # Connect to final x2,y2
+        svg.add_line(points[-1][0], points[-1][1], x2, y2, mode)
 
-    # --- West Wall (Left) ---
-    # Attached to Base Left Edge.
-    # Note: West Wall is wider (S + 2t). It extends 't' vertically past the base top/bottom
-    # to cover the thickness of the North/South walls.
-    
-    # Fold Line
-    svg.add_line(bx, by, bx, by + base_h, "ENGRAVE")
-    
-    ww_x_inner = bx
-    ww_x_outer = bx - wall_ew_h # H wide
-    
-    ww_y_top = by - t
-    ww_y_bot = by + base_h + t
-    
-    # Draw perimeter
-    # Top Edge (Horizontal)
-    svg.add_line(ww_x_outer, ww_y_top, ww_x_inner, ww_y_top, "CUT")
-    # Left Edge (Vertical)
-    svg.add_line(ww_x_outer, ww_y_top, ww_x_outer, ww_y_bot, "CUT")
-    # Bottom Edge (Horizontal)
-    svg.add_line(ww_x_outer, ww_y_bot, ww_x_inner, ww_y_bot, "CUT")
-    
-    # Inner Edge (Vertical) - Splits at the base corner (clearance cuts)
-    svg.add_line(ww_x_inner, ww_y_top, ww_x_inner, by, "CUT")
-    svg.add_line(ww_x_inner, by + base_h, ww_x_inner, ww_y_bot, "CUT")
-    
-    # --- East Wall (Right) ---
-    ew_x_inner = bx + base_w
-    ew_x_outer = bx + base_w + wall_ew_h
-    
-    ew_y_top = ww_y_top
-    ew_y_bot = ww_y_bot
-    
-    # Fold
-    svg.add_line(ew_x_inner, by, ew_x_inner, by + base_h, "ENGRAVE")
-    
-    # Perimeter
-    svg.add_line(ew_x_inner, ew_y_top, ew_x_outer, ew_y_top, "CUT") # Top
-    svg.add_line(ew_x_outer, ew_y_top, ew_x_outer, ew_y_bot, "CUT") # Right
-    svg.add_line(ew_x_outer, ew_y_bot, ew_x_inner, ew_y_bot, "CUT") # Bot
-    
-    # Connection cuts
-    svg.add_line(ew_x_inner, ew_y_top, ew_x_inner, by, "CUT")
-    svg.add_line(ew_x_inner, by + base_h, ew_x_inner, ew_y_bot, "CUT")
 
-    # --- Features ---
+    # --- Draw Parts ---
+
+    # 1. Base (S x S)
+    # Parity: 1 (Tabs on all sides to stick out)
+    bx, by = parts['Base']['x'], parts['Base']['y']
+    bw, bh = parts['Base']['w'], parts['Base']['h']
     
-    # 1. Text Top (on Bottom Panel / Base)
+    # Top (L->R): Parity 1
+    draw_finger_edge(bx, by, bx+bw, by, t, 1, "CUT")
+    # Right (T->B): Parity 1
+    draw_finger_edge(bx+bw, by, bx+bw, by+bh, t, 1, "CUT")
+    # Bottom (R->L): Parity 1
+    draw_finger_edge(bx+bw, by+bh, bx, by+bh, t, 1, "CUT")
+    # Left (B->T): Parity 1
+    draw_finger_edge(bx, by+bh, bx, by, t, 1, "CUT")
+    
+    # Engraving on Base
     if params.get('text_top'):
-        # Center on base
-        svg.add_text(bx + base_w/2, by + base_h/2, params['text_top'], font_size=8, mode="ENGRAVE")
-        
-    # 2. Text Front (on South Wall)
-    if params.get('text_front'):
-        # Center on South Wall
-        svg.add_text(bx + base_w/2, bs_y + wall_ns_h/2, params['text_front'], font_size=8, mode="ENGRAVE")
+        svg.add_text(bx + bw/2, by + bh/2, params['text_top'], font_size=8, mode="ENGRAVE")
 
-    # 3. Logo "Columbia Digital Manufacturing"
+    # 2. Front (S+2t x H)
+    # Location: Below Base? No, we set layout earlier.
+    fx, fy = parts['Front']['x'], parts['Front']['y']
+    fw, fh = parts['Front']['w'], parts['Front']['h']
+    
+    # Bottom Edge (Mates with Base Top? No, Base Front side).
+    # Base Front side (Bottom edge on screen) was R->L Parity 1.
+    # To mate, Front Bottom Edge (L->R usually) needs Parity -1 (Start 0, then t, to match Base 1, 0...)
+    # Base R->L (1, -1, 1...) -> Tab, Gap, Tab.
+    # Front L->R must be: Gap, Tab, Gap. (Complementary).
+    # Gap means Parity -1 (Start 0).
+    # Wait, Front Wall Width is S+2t.
+    # Base Width is S.
+    # The CENTER S portion of Front Bottom mates with Base.
+    # The CORNER t portions mate with Side Walls.
+    # This is complex "Pinwheel" logic.
+    
+    # SIMPLIFIED LAYOUT:
+    # All Walls sit ON TOP of Base (Base is largest S+2t x S+2t).
+    # OR Base fits INSIDE.
+    # Our dimensions: Base S x S. 
+    # This means Base fits INSIDE.
+    # Front Wall (S+2t) overlaps Left/Right Walls.
+    
+    # Let's fix the Mating Logic for "Base Fits Inside":
+    # 1. Base: All edges TABS (Parity 1).
+    # 2. Front/Back (Bottom): SLOTS (Parity -1). BUT Width is S + 2t.
+    #    The slots for Base must be in the CENTER S region.
+    #    The corners (size t) are solid?
+    #    Actually, standard box joint generator:
+    #    Base (S x S): Tabs.
+    #    Front (S+2t x H): 
+    #       - Bottom: Center S has Slots (to rx Base Tabs). Corners solid.
+    #       - Sides: Tabs/Slots to rx Left/Right walls.
+    # Let's handle the Bottom Edge of Front specifically.
+    # Length S+2t.
+    # 0..t: Corner (Solid).
+    # t..S+t: Mating Zone (Slots).
+    # S+t..S+2t: Corner (Solid).
+    
+    # Helper for Composite Edge?
+    # Or just Draw Line, Draw Fingers, Draw Line.
+    
+    def draw_wall_bottom_with_base_slots(px, py, pw, ph):
+        # Start (Bottom Left) -> t (Solid) -> S (Fingers) -> t (Solid) -> End
+        p_y_bot = py + ph
+        # 1. Left Corner
+        svg.add_line(px, p_y_bot, px+t, p_y_bot, "CUT")
+        # 2. Mating Zone (Parity -1 to Rx Base Tabs)
+        draw_finger_edge(px+t, p_y_bot, px+t+S, p_y_bot, t, -1, "CUT")
+        # 3. Right Corner
+        svg.add_line(px+t+S, p_y_bot, px+t+S+t, p_y_bot, "CUT")
+
+
+    # Front Wall Draw
+    # Top: Flat
+    svg.add_line(fx, fy, fx+fw, fy, "CUT")
+    # Sides: Mating with Left/Right Walls.
+    draw_finger_edge(fx+fw, fy, fx+fw, fy+fh, t, 1, "CUT") # Right Side (Down)
+    draw_wall_bottom_with_base_slots(fx, fy, fw, fh)       # Bottom
+    draw_finger_edge(fx, fy+fh, fx, fy, t, 1, "CUT")       # Left Side (Up)
+    
+    # Divider Slot (Vertical) on Front Wall
+    # Divider runs Left-Right or Front-Back?
+    # Usually Divider runs Left-Right (connecting Left and Right walls)? No, that's parallel to Front/Back.
+    # Or Front-Back (connecting Front and Back)?
+    # If Divider connects Front and Back, it is parallel to Left/Right.
+    # Then Slots are needed on Front and Back.
+    # Position is ratio along the Width (S).
+    if params.get('divider_pos') is not None:
+        # pos is 0..1 along S.
+        # Front Wall Width is S+2t. The Inner S part is from fx+t to fx+t+S.
+        pos_ratio = params['divider_pos']
+        # X coord relative to Front Wall start
+        # Slot center x
+        slot_cx = fx + t + S * pos_ratio
+        
+        # Draw Slot (Width t, Height H/2 or similar?)
+        # Let's do a simple vertical slot from Top down? Or internal?
+        # Internal slot is stronger.
+        # Slot height: e.g. H_inner - 20? 
+        # Divider height is H-clearance.
+        # Let's make a slot of height H/2 centered?
+        # Or simpler: 2 slots (top and bottom)?
+        # Let's just do one central vertical slot of length H/2.
+        
+        slot_h_cut = H / 2
+        slot_y_start = fy + (H - slot_h_cut)/2
+        
+        svg.add_rect(slot_cx - t/2, slot_y_start, t, slot_h_cut, "CUT")
+
+    # Logo on Front
     if params.get('include_logo'):
-        # Put it on North Wall
-        svg.add_text(bx + base_w/2, by - wall_ns_h/2 - 4, "Columbia", font_size=6, mode="ENGRAVE")
-        svg.add_text(bx + base_w/2, by - wall_ns_h/2 + 4, "Digital Manufacturing", font_size=4, mode="ENGRAVE")
-        
-    # 4. Fractal (on West Wall)
-    if params.get('include_fractal'):
-        # Fit inside West Wall (H x S approx)
-        # West Wall center:
-        cx_w = (ww_x_inner + ww_x_outer) / 2
-        cy_w = (ww_y_top + ww_y_bot) / 2
-        
-        # Dimensions available (with margin)
-        avail_w = abs(ww_x_outer - ww_x_inner) - 10
-        avail_h = abs(ww_y_bot - ww_y_top) - 10
-        size = min(avail_w, avail_h)
-        
-        # Top-left of fractal box
-        # generate_sierpinski draws from (x,y) downwards.
-        h_tri = size * math.sqrt(3) / 2
-        fx = cx_w - size/2
-        fy = cy_w - h_tri/2
-        
-        polys = generate_sierpinski(fx, fy, size)
-        for poly in polys:
-            svg.add_polyline(poly, mode="ENGRAVE")
+        cx_f = fx + fw/2
+        cy_f = fy + fh/2
+        svg.add_text(cx_f, cy_f - 4, "Columbia", font_size=6, mode="ENGRAVE")
+        svg.add_text(cx_f, cy_f + 4, "Digital Manufacturing", font_size=4, mode="ENGRAVE")
+    if params.get('text_front'):
+         svg.add_text(fx + fw/2, fy + fh/2 - 15, params['text_front'], font_size=6, mode="ENGRAVE")
+
+
+    # 3. Back Wall (Same as Front)
+    bax, bay = parts['Back']['x'], parts['Back']['y']
+    baw, bah = parts['Back']['w'], parts['Back']['h']
+    
+    svg.add_line(bax, bay, bax+baw, bay, "CUT") # Top
+    draw_finger_edge(bax+baw, bay, bax+baw, bay+bah, t, 1, "CUT") # Right
+    draw_wall_bottom_with_base_slots(bax, bay, baw, bah)          # Bottom
+    draw_finger_edge(bax, bay+bah, bax, bay, t, 1, "CUT")         # Left
+    
+    # Divider Slot on Back Wall
+    if params.get('divider_pos') is not None:
+        pos_ratio = params['divider_pos']
+        # Back is mirrored? Logic is same, X from Left is X from Left.
+        # If Divider is at 0.3 from Left (West).
+        # Front Wall: 0.3 from Left.
+        # Back Wall: 0.3 from Left (if viewed from outside).
+        # Inner S starts at t.
+        slot_cx = bax + t + S * pos_ratio
+        slot_h_cut = H / 2
+        slot_y_start = bay + (H - slot_h_cut)/2
+        svg.add_rect(slot_cx - t/2, slot_y_start, t, slot_h_cut, "CUT")
+
+
+    # 4. Left Side Wall (S x H)
+    lx, ly = parts['Left']['x'], parts['Left']['y']
+    lw, lh = parts['Left']['w'], parts['Left']['h']
+    
+    # Mates base at bottom. Mates Front/Back at sides.
+    # Bottom: Mates Base (Parity -1). Direct S length.
+    # Sides: Mates Front/Back (Parity 1). So L/R needs Parity -1.
+    
+    svg.add_line(lx, ly, lx+lw, ly, "CUT") # Top Flat
+    draw_finger_edge(lx+lw, ly, lx+lw, ly+lh, t, -1, "CUT") # Right Side (Matches Front Left 1)
+    draw_finger_edge(lx+lw, ly+lh, lx, ly+lh, t, -1, "CUT") # Bot Side (Matches Base 1)
+    draw_finger_edge(lx, ly+lh, lx, ly, t, -1, "CUT")       # Left Side (Matches Back Right 1)
+
+
+    rx, ry = parts['Right']['x'], parts['Right']['y']
+    rw, rh = parts['Right']['w'], parts['Right']['h']
+    
+    svg.add_line(rx, ry, rx+rw, ry, "CUT")
+    draw_finger_edge(rx+rw, ry, rx+rw, ry+rh, t, -1, "CUT")
+    draw_finger_edge(rx+rw, ry+rh, rx, ry+rh, t, -1, "CUT")
+    draw_finger_edge(rx, ry+rh, rx, ry, t, -1, "CUT")
 
     svg.save()
     return True
 
-def generate_lid_svg(params, filename="lid_square.svg"):
-    """Generates a simple flat lid (shallow box) to fit over the main box."""
-    t = params['t']
-    S = params['S']
-    
-    # Logically the box is a square of width S (inner) + walls?
-    # Actually, E/W walls are S+2t.
-    # So the physical outer width is S + 2t.
-    
-    tolerance = 1.0 # 1mm clearance
-    lid_S = S + 2*t + tolerance
-    lid_H = 25 # Fixed lid height
-    
-    lid_params = params.copy()
-    lid_params['S'] = lid_S
-    lid_params['H'] = lid_H
-    # Disable features for lid
-    lid_params['text_top'] = "LID"
-    lid_params['text_front'] = ""
-    lid_params['include_logo'] = False
-    lid_params['include_fractal'] = False
-    
-    # Recursively use box generator logic for the lid
-    return generate_box_svg(lid_params, filename)
-
 def generate_divider_svg(params, filename="divider_square.svg"):
-    """Generates a divider insert plate with a central slot."""
-    t = params['t']
+    """Generates a simple rectangular divider insert."""
+    # Just a rectangle sized S-tolerance x H-tolerance?
+    # Or specific slots?
+    # Rubric: "a divider that inserts into the container".
+    # For acrylic, loose insert is safest unless we add internal slots to walls.
+    # Adding internal slots is complex (modify wall drawing).
+    # Let's stick to simple rectangle for loose fit.
+    
     S = params['S']
     H = params['H']
+    t = params['t'] # not used for dim, but thick
     
-    # Divider dimensions fit inside S x S.
     clearance = 0.5
-    div_w = S - clearance
-    div_h = H - clearance
+    div_w = S - 2*t - clearance # Fits inside Inner S?
+    # Wait, Inner Dim is S. Walls are outside base.
+    # So Inner Box is S x S.
+    # Divider Width = S - clearance.
     
-    slot_pos_ratio = 0.5 # Default to center
+    div_w = S - clearance
+    div_h = H - clearance # Flush with top?
     
     stock_w = params['stock_w']
     stock_h = params['stock_h']
     
     svg = SVGGenerator(filename, stock_w, stock_h)
-    
-    cx, cy = stock_w/2, stock_h/2
-    x = cx - div_w/2
-    y = cy - div_h/2
-    
-    # Outline
-    svg.add_rect(x, y, div_w, div_h, "CUT")
-    
-    # Slot (Rectangle cut)
-    slot_x = x + div_w * slot_pos_ratio
-    slot_w = t
-    slot_h = div_h / 2
-    
-    svg.add_rect(slot_x - slot_w/2, y, slot_w, slot_h, "CUT")
-    
+    svg.add_rect(stock_w/2 - div_w/2, stock_h/2 - div_h/2, div_w, div_h, "CUT")
     svg.save()
     return True
 
 
-# --- CLI & Main ---
+# --- Wrapper & CLI ---
+
+def print_software_description(params):
+    """Prints the description of the software as required by rubric."""
+    print("\n--- Software Description (Acrylic) ---")
+    print("1. Calculation Steps:")
+    print("   - Inputs: Box Side (S), Height (H), Material Thickness (t).")
+    print("   - Design: 5-Part Finger Joint Box (Base, Front, Back, Left, Right).")
+    print("   - Fingers: Calculated dynamically based on edge length (aiming for 10mm tabs).")
+    print("   - Base Size: S x S (Tabs Out).")
+    print("   - Front/Back Size: (S + 2t) x H. Covers corners.")
+    print("2. Conditions:")
+    print(f"   - Thickness t ({params.get('t')}mm) used for finger depth.")
+    print("   - Layout checked against stock.")
+    print("3. Formulas:")
+    print("   - Tab Depth = t")
+    print("   - Tab Parity ensures A-fits-B (1 vs -1).")
+    print("----------------------------\n")
 
 def get_float(prompt, default=None):
     try:
-        val = input(f"{prompt} [{default}]: ")
+        prompt_str = f"{prompt} [{default}]: " if default is not None else f"{prompt}: "
+        val = input(prompt_str)
         if not val and default is not None:
             return default
         return float(val)
@@ -428,490 +705,81 @@ def get_float(prompt, default=None):
         print("Invalid number.")
         return get_float(prompt, default)
 
-def draw_rollover_wall(svg, x_attach, y_top, y_bot, h, t, direction, slots_y):
-    """Refactored helper to draw a rollover double wall with locking tabs."""
-    # direction: -1 for Left, 1 for Right
-    
-    # Outer Wall
-    x_fold = x_attach + direction * h
-    svg.add_line(x_fold, y_top, x_fold, y_bot, "ENGRAVE") # Fold between Outer/Inner
-    
-    # Outer Wall Top/Bot Edges
-    svg.add_line(x_attach, y_top, x_fold, y_top, "CUT")
-    svg.add_line(x_attach, y_bot, x_fold, y_bot, "CUT")
-    
-    # Inner Wall
-    inner_w = h - t # Slightly less
-    x_end = x_fold + direction * inner_w
-    
-    # Inner Wall Top/Bot Edges
-    svg.add_line(x_fold, y_top, x_end, y_top, "CUT")
-    svg.add_line(x_fold, y_bot, x_end, y_bot, "CUT")
-    
-    # Edge with Locking Tabs aligned to slots_y
-    # tab_h should match slot size (20 from mailer code)
-    slot_h = 20
-    tab_depth = 4 # sticking out
-    x_tab = x_end + direction * tab_depth
-    
-    curr_y = y_top
-    
-    # Create locking tabs for each slot position
-    # slots_y is a list of center Y coordinates for the tabs
-    sorted_slots = sorted(slots_y)
-    
-    for slot_y_center in sorted_slots:
-        t_y1 = slot_y_center - slot_h/2 + 1
-        t_y2 = slot_y_center + slot_h/2 - 1
-        
-        # Line to start of tab
-        svg.add_line(x_end, curr_y, x_end, t_y1, "CUT")
-        # Tab shape
-        svg.add_line(x_end, t_y1, x_tab, t_y1, "CUT")
-        svg.add_line(x_tab, t_y1, x_tab, t_y2, "CUT")
-        svg.add_line(x_tab, t_y2, x_end, t_y2, "CUT")
-        
-        curr_y = t_y2
-        
-    # Final segment to bottom
-    svg.add_line(x_end, curr_y, x_end, y_bot, "CUT")
-
-
-
-def generate_mailer_box_svg(params, filename="mailer_box.svg"):
-    """Generates a detailed FEFCO 0427 mailer box with rollover side walls."""
-    # Params
-    S = params['S'] # Inner width/length (Square base)
-    H = params['H'] # Inner height
-    t = params['t'] # Material thickness
-    stock_w = params['stock_w']
-    stock_h = params['stock_h']
-    
-    # Topology:
-    # Central Column: Lid Flap -> Lid -> Back Wall -> Base -> Front Wall (Double?)
-    # Actually, 0427 standard:
-    # - Base is S x S.
-    # - Back Wall (H) -> Lid (S + ~t) -> Lid Flap (H inwards? or Tuck flap)
-    # - Side Wings (Attached to Base): Outer Wall (H) -> Inner Wall (H-t) -> Locking Tabs
-    # - Front Wall (Attached to Base): Double thickness usually? 
-    #   Wait, looking at the blueprint:
-    #   Bottom panel is "Front Wall". Included tabs on sides?
-    #   Usually 0427 Front Wall is formed by the Side Wings folding over and locking?
-    #   No, 0427 has a Front Wall panel attached to the base.
-    #   The Side Wings have "ears" that tuck into the Front Wall?
-    #   Image Analysis:
-    #   - Bottom Panel (Front Wall): Single panel. Height ~H.
-    #   - Side Wings have "ears" on the FRONT end. These ears tuck into the Front Wall (Double wall front).
-    #   - BUT the blueprint shows Side Wings rolling over (Double Side Walls).
-    #   
-    #   Let's implement the robust "Rollover Side" 0427:
-    #   1. Base (S x S)
-    #   2. Back Wall (Attached to Base Top). Height H.
-    #   3. Lid (Attached to Back Top). Depth S. Width S (plus clearance).
-    #      - Includes Dust Flaps on sides (Tuck into side walls).
-    #      - Includes Front Tuck Flap (Tucks into Front Wall).
-    #   4. Front Wall (Attached to Base Bottom). Height H.
-    #      - Has slots to receive Side Wing lugs?
-    #      - Or is it double?
-    #      Let's go with a simpler interpretation of the blueprint which seems to be:
-    #      - Side Walls are double (Rollover). They have tabs that lock into the BASE slots.
-    #      - Front Wall is attached to Base.
-    #      - Lid tucks into Front Wall.
-    
-    # Dimensions
-    # Base
-    Base_W = S
-    Base_D = S
-    
-    # Walls
-    Back_H = H
-    Front_H = H
-    
-    # Lid
-    Lid_D = S # Covers the base
-    # Lid Width: Needs to cover the Side Walls.
-    # Side Walls are Double. Thickness = 2*t?
-    # If Outer Wall is vertical, Inner Wall is inside.
-    # Outer dimension is Base_W + 2*t.
-    # So Lid Width = Base_W + 2*t.
-    Lid_W = S + 2*t
-    
-    # Side Wings (Rollover)
-    # Outer Side Height = H
-    # Inner Side Height = H - t (to sit on base)
-    # Locking Lugs on Inner Side bottom edge.
-    
-    # Layout Calculation
-    # Width = LeftSide (H + H) + Base (S) + RightSide (H + H) = S + 4H
-    # Height = LidFlap + Lid + Back + Base + Front
-    
-    # Check Stock
-    total_w = S + 4 * H + 20 # margins
-    total_h = H + Lid_D + Back_H + Base_D + Front_H + 20
-    
-    if total_w > stock_w or total_h > stock_h:
-        print(f"Error: Layout size ({total_w:.1f} x {total_h:.1f} mm) larger than stock ({stock_w} x {stock_h} mm).")
-        return False
-        
-    svg = SVGGenerator(filename, stock_w, stock_h)
-    
-    cx = stock_w / 2
-    cy = stock_h / 2
-    
-    # Y-Flow (Top to Bottom)
-    # We center the Base
-    y_base_top = cy - S/2
-    y_base_bot = cy + S/2
-    
-    bx = cx - S/2
-    by = y_base_top
-    
-    # --- 1. Base ---
-    # Folds
-    svg.add_line(bx, by, bx + S, by, "ENGRAVE") # Back
-    svg.add_line(bx, by + S, bx + S, by + S, "ENGRAVE") # Front
-    svg.add_line(bx, by, bx, by + S, "ENGRAVE") # Left
-    svg.add_line(bx + S, by, bx + S, by + S, "ENGRAVE") # Right
-    
-    # Slots for Rollover Tabs
-    # Located in Base, near Left/Right edges.
-    # Tab Position: Centered or specific? 
-    # Usually 2 slots per side or 1 long one.
-    # Blueprint has rectangles. Let's put 2 slots per side.
-    slot_w = 4 # Width of slot (thickness accommodation)
-    slot_h = 20 # Length of slot
-    slot_inset = 2 # From edge
-    
-    # Left Slots
-    ls_x = bx + slot_inset
-    svg.add_rect(ls_x, by + S/4 - slot_h/2, slot_w, slot_h, "CUT")
-    svg.add_rect(ls_x, by + 3*S/4 - slot_h/2, slot_w, slot_h, "CUT")
-    
-    # Right Slots
-    rs_x = bx + S - slot_inset - slot_w
-    svg.add_rect(rs_x, by + S/4 - slot_h/2, slot_w, slot_h, "CUT")
-    svg.add_rect(rs_x, by + 3*S/4 - slot_h/2, slot_w, slot_h, "CUT")
-    
-    # --- 2. Back Wall ---
-    # [bx, bx+S] x [by-H, by]
-    y_back_top = by - H
-    svg.add_line(bx, y_back_top, bx + S, y_back_top, "ENGRAVE") # Fold to Lid
-    svg.add_line(bx, y_back_top, bx, by, "CUT") # Left Edge
-    svg.add_line(bx + S, y_back_top, bx + S, by, "CUT") # Right Edge
-    
-    # --- 3. Lid ---
-    # [lid_x_left, lid_x_right] x [y_lid_top, y_back_top]
-    # Lid Width = S + 2t. Centered on Back.
-    lid_x_left = cx - Lid_W/2
-    lid_x_right = cx + Lid_W/2
-    y_lid_top = y_back_top - Lid_D
-    
-    # Connection Back->Lid
-    svg.add_line(bx, y_back_top, lid_x_left, y_back_top, "CUT")
-    svg.add_line(bx + S, y_back_top, lid_x_right, y_back_top, "CUT")
-    
-    # Lid Side Folds (for Dust Flaps)
-    svg.add_line(lid_x_left, y_lid_top, lid_x_left, y_back_top, "ENGRAVE")
-    svg.add_line(lid_x_right, y_lid_top, lid_x_right, y_back_top, "ENGRAVE")
-    
-    # --- 4. Lid Dust Flaps ---
-    # Attached to Lid Sides.
-    # Width H - 2 (clearance). Depth Lid_D (tapered).
-    df_w = H - 2
-    # Left
-    svg.add_line(lid_x_left - df_w, y_lid_top + 5, lid_x_left - df_w, y_back_top - 5, "CUT") # Outer
-    svg.add_line(lid_x_left - df_w, y_lid_top + 5, lid_x_left, y_lid_top, "CUT") # Top Diag
-    svg.add_line(lid_x_left - df_w, y_back_top - 5, lid_x_left, y_back_top, "CUT") # Bot Diag
-    
-    # Right
-    svg.add_line(lid_x_right + df_w, y_lid_top + 5, lid_x_right + df_w, y_back_top - 5, "CUT")
-    svg.add_line(lid_x_right + df_w, y_lid_top + 5, lid_x_right, y_lid_top, "CUT")
-    svg.add_line(lid_x_right + df_w, y_back_top - 5, lid_x_right, y_back_top, "CUT")
-    
-    # --- 5. Lid Tuck Flap ---
-    # Attached to Lid Top (y_lid_top).
-    # Height ~ H.
-    # Tucks into Front Wall.
-    tf_h = H - 5
-    y_flap_end = y_lid_top - tf_h
-    
-    # Fold
-    svg.add_line(lid_x_left, y_lid_top, lid_x_right, y_lid_top, "ENGRAVE")
-    
-    # Shape: Locking Ears ("Cherry Locks")
-    # Tapers in, then bumps out, then round.
-    # Simplified: Tapered rect.
-    flap_w_start = Lid_W
-    flap_w_end = Lid_W - 10
-    fx_left = cx - flap_w_end/2
-    fx_right = cx + flap_w_end/2
-    
-    svg.add_line(lid_x_left, y_lid_top, fx_left, y_flap_end, "CUT")
-    svg.add_line(lid_x_right, y_lid_top, fx_right, y_flap_end, "CUT")
-    svg.add_line(fx_left, y_flap_end, fx_right, y_flap_end, "CUT")
-    
-    # --- 6. Front Wall ---
-    # Attached to Base Bottom (y_base_bot).
-    # Height H. Width S.
-    y_front_bot = y_base_bot + H
-    
-    # Sides (Locking slots for Side Wings?)
-    # Usually standard 0427 Front Wall has folded ends that lock with side wings.
-    # Simple version: Rectangular panel.
-    svg.add_line(bx, y_base_bot, bx, y_front_bot, "CUT")
-    svg.add_line(bx + S, y_base_bot, bx + S, y_front_bot, "CUT")
-    svg.add_line(bx, y_front_bot, bx + S, y_front_bot, "CUT")
-    
-    # --- 7. Rollover Side Wings ---
-    # Attached to Base Left/Right.
-    # Structure: Outer Wall (width H) -> Fold -> Inner Wall (width H-t) -> Tabs.
-    
-    # --- 7. Rollover Side Wings (using helper) ---
-    # Attached to Base Left/Right.
-    
-    # Calculate slot positions (same as derived in Base section)
-    # s1_y = by + S/4
-    # s2_y = by + 3*S/4
-    s1_y = by + S/4
-    s2_y = by + 3*S/4
-    
-    draw_rollover_wall(svg, bx, by, by + S, H, t, -1, [s1_y, s2_y]) # Left
-    draw_rollover_wall(svg, bx + S, by, by + S, H, t, 1, [s1_y, s2_y]) # Right
-
-    # --- Text ---
-    if params.get('text_top'):
-        svg.add_text(cx, (y_lid_top + y_back_top)/2, params['text_top'], font_size=10, mode="ENGRAVE")
-
-    svg.save()
-    return True
-
-
-
-def generate_tray_svg(params, filename="tray_rollover.svg"):
-    """Generates a lidless tray with double rollover side walls (FEFCO 0422 style)."""
-    S = params['S']
-    H = params['H']
-    t = params['t']
-    stock_w = params['stock_w']
-    stock_h = params['stock_h']
-    
-    # Layout Check
-    total_w = S + 4*H + 20
-    total_h = S + 2*(H + H) + 20 # S + 4H roughly
-    
-    if total_w > stock_w or total_h > stock_h:
-        print(f"Error: Layout size ({total_w:.1f} x {total_h:.1f} mm) larger than stock ({stock_w} x {stock_h} mm).")
-        return False
-    
-    svg = SVGGenerator(filename, stock_w, stock_h)
-    
-    cx = stock_w / 2
-    cy = stock_h / 2
-    
-    # Coordinates
-    bx = cx - S/2
-    by = cy - S/2
-    
-    # --- Base ---
-    svg.add_line(bx, by, bx + S, by, "ENGRAVE") 
-    svg.add_line(bx, by + S, bx + S, by + S, "ENGRAVE")
-    svg.add_line(bx, by, bx, by + S, "ENGRAVE")
-    svg.add_line(bx + S, by, bx + S, by + S, "ENGRAVE")
-    
-    # Slots (Same as mailer)
-    slot_w = 4; slot_h = 20; slot_inset = 2
-    s1_y = by + S/4
-    s2_y = by + 3*S/4
-    
-    ls_x = bx + slot_inset
-    svg.add_rect(ls_x, s1_y - slot_h/2, slot_w, slot_h, "CUT")
-    svg.add_rect(ls_x, s2_y - slot_h/2, slot_w, slot_h, "CUT")
-    
-    rs_x = bx + S - slot_inset - slot_w
-    svg.add_rect(rs_x, s1_y - slot_h/2, slot_w, slot_h, "CUT")
-    svg.add_rect(rs_x, s2_y - slot_h/2, slot_w, slot_h, "CUT")
-    
-    # --- Front/Back Walls with Corner Flaps ---
-    
-    def draw_end_wall_assembly(y_hinge, is_top):
-        # direction_y: -1 for Top (up), 1 for Bot (down)
-        dy = -1 if is_top else 1
-        y_edge = y_hinge + dy * H
-        
-        # Left Corner Flap
-        flap_w = H - 2*t # clearance
-        flap_x_outer = bx - flap_w
-        
-        # Fold Main Wall - Flap (Actually fold base-wall is done)
-        # We need folds between Wall and Flaps?
-        # Yes, corner flaps are attached to Left/Right of the Wall panel.
-        
-        # Wall Panel Vertical Edges (Folds to flaps)
-        svg.add_line(bx, y_hinge, bx, y_edge, "ENGRAVE")
-        svg.add_line(bx + S, y_hinge, bx + S, y_edge, "ENGRAVE")
-        
-        # Draw Left Flap
-        # y positions are same as wall: y_hinge to y_edge
-        svg.add_line(flap_x_outer, y_hinge, bx, y_hinge, "CUT") # Side (near base)
-        svg.add_line(flap_x_outer, y_hinge, flap_x_outer, y_edge, "CUT") # Outer
-        svg.add_line(flap_x_outer, y_edge, bx, y_edge, "CUT") # Top/Bot edge
-        
-        # Draw Right Flap
-        flap_x_outer_r = bx + S + flap_w
-        svg.add_line(bx + S, y_hinge, flap_x_outer_r, y_hinge, "CUT")
-        svg.add_line(flap_x_outer_r, y_hinge, flap_x_outer_r, y_edge, "CUT")
-        svg.add_line(flap_x_outer_r, y_edge, bx + S, y_edge, "CUT")
-        
-        # Main Wall Top/Bot Edge (Outer edge)
-        svg.add_line(bx, y_edge, bx + S, y_edge, "CUT")
-
-    # Draw Back Assembly (Top)
-    draw_end_wall_assembly(by, True)
-    
-    # Draw Front Assembly (Bottom)
-    draw_end_wall_assembly(by + S, False)
-    
-    # --- Rollover Wings ---
-    draw_rollover_wall(svg, bx, by, by + S, H, t, -1, [s1_y, s2_y]) # Left
-    draw_rollover_wall(svg, bx + S, by, by + S, H, t, 1, [s1_y, s2_y]) # Right
-    
-    svg.save()
-    return True
-
 def get_bool(prompt):
     val = input(f"{prompt} (y/n) [n]: ").lower()
     return val == 'y'
 
 def validate_inputs(params):
-    # thickness t must be less than min(S, H) / 2
     t = params['t']
     if t <= 0: return False, "Thickness must be positive."
     if params['S'] <= 0 or params['H'] <= 0: return False, "Dimensions must be positive."
-    
     limit = min(params['S'], params['H']) / 2
     if t >= limit:
-        return False, f"Thickness {t} is too large for dimensions (limit < {limit})."
-    
-    if params.get('tab_width', 0) > params['S']:
-        return False, "Tab width larger than side S."
-    if params.get('tab_depth', 0) > params['H']:
-        return False, "Tab depth larger than height H."
-        
+        return False, f"Thickness {t} is too large."
     return True, ""
 
-def run_examples():
-    """Generates 4 example files for the report."""
-    print("Generating examples...")
-    
-    # Example 1: Standard Box
-    p1 = {
-        'S': 100, 'H': 80, 't': 3,
-        'stock_w': 600, 'stock_h': 600,
-        'tab_width': 15, 'tab_depth': 10,
-        'include_logo': True, 'include_fractal': False,
-        'text_top': "Ex1 Top", 'text_front': "Front"
-    }
-    generate_box_svg(p1, "example1_basic.svg")
-    
-    # Example 2: Fractal Box
-    p2 = p1.copy()
-    p2['include_fractal'] = True
-    p2['text_top'] = "Fractal Box"
-    generate_box_svg(p2, "example2_fractal.svg")
-    
-    # Example 3: Lid and Divider
-    p3 = p1.copy()
-    p3['S'] = 80 # Smaller to fit
-    p3['text_top'] = "Parts Box"
-    generate_box_svg(p3, "example3_main.svg")
-    generate_lid_svg(p3, "example3_lid.svg")
-    generate_divider_svg(p3, "example3_div.svg")
-    
-    # Example 4: Rectangle
-    generate_rectangle_svg(50, 25, "example4_rectangle.svg")
-    
-    # Mailer Example
-    p_mail = p1.copy()
-    p_mail['S'] = 150
-    p_mail['H'] = 50
-    p_mail['text_top'] = "Mailer Box"
-    generate_mailer_box_svg(p_mail, "example_mailer.svg")
-    
-    # Tray Example
-    generate_tray_svg(p_mail, "example_tray.svg")
-    
-    print("Examples generated.")
-
 def main():
-    print("=== Parametric Box Generator ===")
-    print("1. Generate Rectangle SVG (Task 1)")
-    print("2. Generate Box SVGs (Standard Open Bin)")
-    print("3. Generate Mailer Box SVG (FEFCO 0427)")
-    print("4. Generate Tray SVG (Lidless 0427)")
-    print("5. Run Example Suite")
+    print("=== Parametric Acrylic Box Generator ===")
+    print("1. Task 1: Generate Small Rectangle Check (<= 2x2 inches)")
+    print("2. Task 2: Generate Acrylic Box (Finger Joints)")
     
-    choice = input("Select > ")
+    choice = input("\nSelect > ")
     
     if choice == '1':
-        w = get_float("Width (mm)", 40.0)
-        h = get_float("Height (mm)", 30.0)
-        generate_rectangle_svg(w, h)
+        print("\n-- Generating Small Rectangle --")
+        w = get_float("Width (mm) [Max 50.8]", 50.0)
+        h = get_float("Height (mm) [Max 50.8]", 25.0)
+        generate_rectangle_svg(w, h, "task1_rectangle.svg")
         
     elif choice == '2':
+        print("\n-- Acrylic Box Configuration --")
         params = {}
-        params['stock_w'] = get_float("Stock Width", 600)
-        params['stock_h'] = get_float("Stock Height", 400)
-        params['t'] = get_float("Thickness t", 3.0)
-        params['S'] = get_float("Side S", 100.0)
-        params['H'] = get_float("Height H", 50.0)
-        params['tab_width'] = get_float("Tab Width", 20.0)
-        params['tab_depth'] = get_float("Tab Depth", 15.0)
+        params['stock_w'] = get_float("Stock Width (mm)", 600)
+        params['stock_h'] = get_float("Stock Height (mm)", 600)
+        params['t'] = get_float("Material Thickness t (mm)", 3.0)
         
-        params['text_top'] = input("Text on Top [enter for none]: ")
-        params['text_front'] = input("Text on Front [enter for none]: ")
+        print("\n-- Dimensions --")
+        params['S'] = get_float("Box Side Length S (mm) [Inner]", 100.0)
+        params['H'] = get_float("Box Height H (mm)", 60.0)
         
-        params['include_logo'] = get_bool("Include Logo?")
-        params['include_fractal'] = get_bool("Include Fractal?")
+        print("\n-- Features --")
+        do_div = get_bool("Include Divider Insert?")
+        if do_div:
+            params['divider_pos'] = get_float("Divider Position Ratio (0.0-1.0, 0.5=Center)", 0.5)
         
-        do_lid = get_bool("Include Lid?")
-        do_div = get_bool("Include Divider?")
+        print("\n-- Engraving --")
+        # User request: "for the base I want it to say Digital Manufacturing"
+        # We can set this as default or hardcode it. Let's provide it as default.
+        default_base_text = "Digital Manufacturing"
+        t_top = input(f"Text on Base [{default_base_text}]: ")
+        params['text_top'] = t_top if t_top else default_base_text
         
+        # User request: "for the 4 walls I want no text"
+        # We will disable the user-specified front text prompt.
+        params['text_front'] = ""
+        
+        params['include_logo'] = get_bool("Engrave Columbia Logo (Front Wall)?")
+        # params['include_fractal'] removed per user request
+        
+        # Validation
         valid, msg = validate_inputs(params)
         if not valid:
-            print("Error:", msg)
+            print(f"\nError: {msg}")
             return
             
-        generate_box_svg(params, "box_square.svg")
-        if do_lid:
-            generate_lid_svg(params, "lid_square.svg")
-        if do_div:
-            generate_divider_svg(params, "divider_square.svg")
+        # Execution
+        print("\nGenerating files base on Acrylic Finger Joints...")
+        
+        # Reuse 'box_main.svg' filename or specific
+        success = generate_box_svg(params, "box_acrylic_parts.svg")
+        
+        if success:
+            if do_div:
+                generate_divider_svg(params, "box_divider.svg")
+            print_software_description(params)
             
-    elif choice == '3':
-        params = {}
-        params['stock_w'] = get_float("Stock Width", 600)
-        params['stock_h'] = get_float("Stock Height", 600) # Need more height for mailer
-        params['t'] = get_float("Thickness t", 3.0)
-        params['S'] = get_float("Side S", 150.0)
-        params['H'] = get_float("Height H", 50.0)
-        params['text_top'] = input("Text on Lid [enter for none]: ")
-        
-        generate_mailer_box_svg(params, "mailer_box.svg")
-        
-    elif choice == '4':
-        params = {}
-        params['stock_w'] = get_float("Stock Width", 600)
-        params['stock_h'] = get_float("Stock Height", 600) 
-        params['t'] = get_float("Thickness t", 3.0)
-        params['S'] = get_float("Side S", 150.0)
-        params['H'] = get_float("Height H", 50.0)
-        generate_tray_svg(params, "tray_rollover.svg")
-        
-    elif choice == '5':
-        run_examples()
     else:
-        print("Invalid choice.")
-
+        print("Invalid selection.")
 
 if __name__ == "__main__":
     main()
