@@ -494,48 +494,7 @@ def generate_box_svg(params, filename="box_square.svg"):
         # Right
         add_screw_hole(bx + bw - EDGE_OFFSET_X, by + bh/2, base_bounds)
 
-    # Engraving on Base
-    if params.get('text_top'):
-        text = params['text_top']
-        cx = bx + bw/2
-        cy = by + bh/2
-        
-        if text == "DIGITAL MANUFACTURING":
-            # Split into two lines, moved up 10mm
-            svg.add_text(cx, cy - 25, "DIGITAL", font_size=8, mode="ENGRAVE")
-            svg.add_text(cx, cy - 15, "MANUFACTURING", font_size=8, mode="ENGRAVE")
-        else:
-            svg.add_text(cx, cy - 20, text, font_size=8, mode="ENGRAVE")
-        
-    # Image on Base (Shield)
-    # Check if 'columbia_logo.svg' exists in output dir
-    shield_rel_path = "columbia_logo.svg"
-    shield_full_path = os.path.join("output", shield_rel_path)
-    if os.path.exists(shield_full_path):
-        # Embed as Base64 to ensure it shows in all viewers (avoid local file restrictions)
-        try:
-            with open(shield_full_path, "r") as IMG:
-                # Read SVG content and replace the color to match ENGRAVE blue
-                svg_content = IMG.read()
-                # Replace the dark blue (#002d74) with blue (rgb(0,0,255)) to match text
-                svg_content = svg_content.replace('#002d74', 'rgb(0,0,255)')
-                shield_b64 = base64.b64encode(svg_content.encode('utf-8')).decode('utf-8')
-                shield_href = f"data:image/svg+xml;base64,{shield_b64}"
-                
-                # Center below text
-                # Source is 1375 x 718 (~1.91 ratio).
-                # Quadruple size (2x larger): Width = 100mm. Height = 100 / 1.91 = 52.36mm.
-                img_w = 100.0
-                img_h = 52.4
-                img_x = bx + bw/2 - img_w/2
-                # Start image below the "MANUFACTURING" text (which is at cy-5).
-                # Text height is ~8mm.
-                # Position moved up 10mm from cy + 5 to cy - 5
-                img_y = by + bh/2 - 5
-                
-                svg.add_image(img_x, img_y, img_w, img_h, shield_href, "ENGRAVE")
-        except Exception as e:
-            print(f"Warning: Failed to embed image: {e}")
+    # Base panel - no engraving (moved to right wall)
 
     # Edge Logic for Front/Back (Bottom):
     # Base fits INSIDE the walls.
@@ -649,6 +608,18 @@ def generate_box_svg(params, filename="box_square.svg"):
         
         # Bottom Edge: Receives Base Screw. Direction UP (centered)
         draw_t_slot(lx + lw/2, ly + lh, 'UP')
+    
+    # Fractal on Left Wall (Side without text/logo)
+    if params.get('fractal'):
+        # Center of Left Wall, moved down 10mm
+        frac_cx = lx + lw/2
+        frac_cy = ly + lh/2 + 10
+        # Size: 60% of min dimension
+        frac_size = min(lw, lh) * 0.6
+        
+        triangles = generate_sierpinski(frac_cx, frac_cy, frac_size, 4)
+        for tri in triangles:
+            svg.add_polyline(tri, "ENGRAVE")
 
 
     # 5. Right Side Wall
@@ -676,17 +647,44 @@ def generate_box_svg(params, filename="box_square.svg"):
         # Bottom: Direction UP (centered)
         draw_t_slot(rx + rw/2, ry + rh, 'UP')
         
-    # Fractal on Right Wall (Side without Slide/Divider slots)
-    if params.get('fractal'):
+    # Text and Logo on Right Wall (Side without Divider)
+    if params.get('text_top'):
+        text = params['text_top']
         # Center of Right Wall
-        frac_cx = rx + rw/2
-        frac_cy = ry + rh/2
-        # Size: 60% of min dimension
-        frac_size = min(rw, rh) * 0.6
+        cx = rx + rw/2
+        cy = ry + rh/2
         
-        triangles = generate_sierpinski(frac_cx, frac_cy, frac_size, 4)
-        for tri in triangles:
-            svg.add_polyline(tri, "ENGRAVE")
+        if text == "DIGITAL MANUFACTURING":
+            # Split into two lines, moved up 10mm
+            svg.add_text(cx, cy - 25, "DIGITAL", font_size=8, mode="ENGRAVE")
+            svg.add_text(cx, cy - 15, "MANUFACTURING", font_size=8, mode="ENGRAVE")
+        else:
+            svg.add_text(cx, cy - 20, text, font_size=8, mode="ENGRAVE")
+    
+    # Columbia Logo on Right Wall
+    shield_rel_path = "columbia_logo.svg"
+    shield_full_path = os.path.join("output", shield_rel_path)
+    if os.path.exists(shield_full_path):
+        try:
+            with open(shield_full_path, "r") as IMG:
+                # Read SVG content and replace the color to match ENGRAVE blue
+                svg_content = IMG.read()
+                # Replace the dark blue (#002d74) with blue (rgb(0,0,255)) to match text
+                svg_content = svg_content.replace('#002d74', 'rgb(0,0,255)')
+                shield_b64 = base64.b64encode(svg_content.encode('utf-8')).decode('utf-8')
+                shield_href = f"data:image/svg+xml;base64,{shield_b64}"
+                
+                # Logo dimensions and positioning on Right Wall
+                img_w = 100.0
+                img_h = 52.4
+                img_x = rx + rw/2 - img_w/2
+                img_y = ry + rh/2 - 5
+                
+                svg.add_image(img_x, img_y, img_w, img_h, shield_href, "ENGRAVE")
+        except Exception as e:
+            print(f"Warning: Failed to embed image: {e}")
+    
+
 
     # 6. Divider (if enabled)
     if 'Divider' in parts:
