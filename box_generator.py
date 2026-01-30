@@ -113,8 +113,9 @@ class SVGGenerator:
 def generate_box_svg(params, filename="box_square.svg"):
     """Generates the acrylic finger-joint box layout."""
     # Unpack params
-    S = params['S']
-    H = params['H']
+    W = params['W']   # Width (x-dimension of Base)
+    D = params['D']   # Depth (y-dimension of Base)
+    H = params['H']   # Height
     t = params['t']
     stock_w = params['stock_w']
     stock_h = params['stock_h']
@@ -130,32 +131,38 @@ def generate_box_svg(params, filename="box_square.svg"):
     margin = 5
     
     # Dimensions:
-    # Base: S x S (Inner)
-    # Front/Back: (S + 2t) x H (Covers corners)
-    # Left/Right: S x H (Fits between Front/Back)
+    # Base: W x D (Inner)
+    # Front/Back: (W + 2t) x H (Covers corners)
+    # Left/Right: D x H (Fits between Front/Back)
     
     # Parts List with Sizes (W, H)
     parts = {}
     
-    # 1. Base (S x S)
-    parts['Base'] = {'w': S, 'h': S}
+    # 1. Base (W x D)
+    parts['Base'] = {'w': W, 'h': D}
     
-    # 2. Front (S+2t x H)
-    parts['Front'] = {'w': S + 2*t, 'h': H}
-    parts['Back']  = {'w': S + 2*t, 'h': H}
+    # 2. Front (W+2t x H)
+    parts['Front'] = {'w': W + 2*t, 'h': H}
     
-    # 3. Side (S x H)
-    parts['Left']  = {'w': S, 'h': H}
-    parts['Right'] = {'w': S, 'h': H}
+    # 3. Back (W+2t x H)
+    parts['Back'] = {'w': W + 2*t, 'h': H}
+    
+    # 4. Left (D x H)
+    parts['Left'] = {'w': D, 'h': H}
+    
+    # 5. Right (D x H)
+    parts['Right'] = {'w': D, 'h': H}
 
     if 'divider_pos' in params:
-        parts['Divider'] = {'w': S, 'h': H}
+        # Divider runs parallel to Left/Right walls, splitting Width W
+        parts['Divider'] = {'w': D, 'h': H} # Divider width is D, height is H
     
-    # 4. Lid (if enabled) - outer dimensions match box
+    # 6. Lid (if enabled) - outer dimensions match box
     if params.get('lid', True):
-        # Main lid panel
-        lid_outer = S + 2*t
-        parts['Lid'] = {'w': lid_outer, 'h': lid_outer}
+        # Main lid panel: Covers W+2t x D+2t
+        lid_w_outer = W + 2*t
+        lid_d_outer = D + 2*t
+        parts['Lid'] = {'w': lid_w_outer, 'h': lid_d_outer}
 
     
     # --- Fractal Generator ---
@@ -201,7 +208,7 @@ def generate_box_svg(params, filename="box_square.svg"):
 
     # Layout Calculation
     max_row_h = H
-    total_w_row1 = parts['Front']['w'] + parts['Back']['w'] + parts['Left']['w'] + parts['Right']['w'] + 4*margin
+    # total_w_row1 = parts['Front']['w'] + parts['Back']['w'] + parts['Left']['w'] + parts['Right']['w'] + 4*margin
     # Row 1: Front, Back
     # Row 2: Left, Right, Base, Divider?
     
@@ -259,10 +266,22 @@ def generate_box_svg(params, filename="box_square.svg"):
         if x_cursor + parts['Lid']['w'] > stock_w:
             # Move to next row
             x_cursor = margin
-            y_cursor += max([p.get('h', 0) for p in [parts.get('Base'), parts.get('Divider')] if p]) + margin
+            # Max height of previous row elements
+            prev_row_max_h = 0
+            if 'Base' in parts: prev_row_max_h = max(prev_row_max_h, parts['Base']['h'])
+            if 'Divider' in parts: prev_row_max_h = max(prev_row_max_h, parts['Divider']['h'])
+            if prev_row_max_h == 0: # If no base or divider, use H
+                prev_row_max_h = H
+            y_cursor += prev_row_max_h + margin
+        
+        # Calculate vertical space needed for lips (above lid)
+        # 4 strips of height t + spacing
+        lip_spacing = 5.0
+        lip_reserved_h = 4 * (t + lip_spacing)
         
         parts['Lid']['x'] = x_cursor
-        parts['Lid']['y'] = y_cursor
+        # Shift Lid Y down to make room for lips above it
+        parts['Lid']['y'] = y_cursor + lip_reserved_h
             
     # Check Layout Bounds
     max_x = 0
@@ -328,17 +347,7 @@ def generate_box_svg(params, filename="box_square.svg"):
             if i > 0:
                 svg.add_line(points[-1][0], points[-1][1], seg_start_x, seg_start_y, mode)
                 
-            # If first point and offset is non-zero, we surely need to connect from x1,y1?
-            # Actually we usually start FROM the corner.
-            # If Parity 1 (Start Tab +t): Do we start at corner or corner+t?
-            # Corner is part dimension.
-            # Base S x S.
-            # Corner is at 0. Tab starts at corner?
-            # Yes, corner is inside the tab? Or tab starts after corner?
-            # Standard: Corner IS part of a tab (stronger).
-            # So we start at (x1,y1) + offset.
-            # But the "Line" starts at x1,y1.
-            # So we need to draw (x1,y1) -> Start.
+            # Corner Logic: Corner is part of a tab (stronger).
             if i == 0:
                  svg.add_line(x1, y1, seg_start_x, seg_start_y, mode)
             
@@ -355,20 +364,32 @@ def generate_box_svg(params, filename="box_square.svg"):
 
 
 
-    # --- Improved Screw Logic M3 ---
-    screw_diam = 3.4     # M3 Clearance (increased for acrylic tolerance)
-    screw_len_eff = 12   # Effective screw length for T-slot calcs
-    nut_w = 5.5          # M3 Square Nut Width
-    nut_h = 2.4          # M3 Square Nut Thickness (Depth of pocket)
-    nut_off = 8.0        # Distance from edge to Nut Center
+    # --- IMPROVED SCREW & FABRICATION LOGIC ---
+    # --- IMPROVED SCREW & FABRICATION LOGIC ---
+    # Mechanical Intent: Optional reinforcement. Relies on Base-to-Wall connections (clamp).
+    # "Fabrication Safe": Holes are kept far from cuts to prevent cracking.
     
-    # Parametric edge offsets for hole placement
-    EDGE_OFFSET_X = 8.0  # mm from vertical edges
-    EDGE_OFFSET_Y = 12.0 # mm from top and bottom edges
-    MIN_EDGE = 2.5       # mm minimum distance from hole edge to any cut edge
+    # Fastener Specs: M3 Machine Screw
+    screw_diam = 3.2     # 3.2mm Clearance hole for M3 (standard fabrication fit)
+    nut_w = 5.5          # M3 Square Nut Width
+    nut_h = 2.4          # M3 Square Nut Thickness
+    nut_off = 8.0        # Center distance for nut pocket
+    
+    # Safety Margins
+    # Minimum distance from any cut edge (including finger roots)
+    # Finger roots penetrate 't' deep. So hole center must be > t + (2*t) = 3*t from edge.
+    SAFETY_FACTOR_EDGE = 3.0 # Multiplier of thickness 't'
+    
+    # Dynamic Offset Calculation
+    # Ensures hole is safely inside the "meat" of the panel
+    safe_offset = max(t * SAFETY_FACTOR_EDGE, 9.0) # At least 9mm or 3*t
+    
+    EDGE_OFFSET_X = safe_offset 
+    EDGE_OFFSET_Y = safe_offset
+    MIN_EDGE = 2.0 * t   # 2x thickness min distance from any feature
     
     # Check if we are doing screws
-    do_screws = params.get('screws', False)
+    do_screws = params.get('screws', True)
     
     # BOM tracking
     screw_count = 0
@@ -376,26 +397,30 @@ def generate_box_svg(params, filename="box_square.svg"):
     
     def validate_hole_position(cx, cy, panel_bounds):
         """
-        Validates that a hole position maintains MIN_EDGE distance from all edges.
-        panel_bounds: (x_min, y_min, x_max, y_max)
-        Returns: (adjusted_cx, adjusted_cy)
+        Auto-repositions hole if it violates edge safety margins.
         """
         x_min, y_min, x_max, y_max = panel_bounds
         hole_radius = screw_diam / 2
         
-        # Check and adjust position to maintain minimum edge distance
-        min_cx = x_min + hole_radius + MIN_EDGE
-        max_cx = x_max - hole_radius - MIN_EDGE
-        min_cy = y_min + hole_radius + MIN_EDGE
-        max_cy = y_max - hole_radius - MIN_EDGE
+        # Safe bonding box for hole center
+        margin = MIN_EDGE + hole_radius
         
-        adjusted_cx = max(min_cx, min(cx, max_cx))
-        adjusted_cy = max(min_cy, min(cy, max_cy))
+        # Enforce minimums (clamp)
+        # Note: EDGE_OFFSET already sets a good target, this clamps manual deviations
+        min_cx = x_min + margin
+        max_cx = x_max - margin
+        min_cy = y_min + margin
+        max_cy = y_max - margin
         
-        return adjusted_cx, adjusted_cy
+        # If panel is too small, this might cross over. 
+        # For this box size, we assume valid range exists.
+        if min_cx > max_cx: min_cx = max_cx = (x_min + x_max)/2
+        if min_cy > max_cy: min_cy = max_cy = (y_min + y_max)/2
+        
+        return max(min_cx, min(cx, max_cx)), max(min_cy, min(cy, max_cy))
     
     def add_screw_hole(cx, cy, panel_bounds=None):
-        """Adds a screw hole with optional edge distance validation."""
+        """Adds a 3.2mm clearance hole for M3 screw."""
         nonlocal screw_count
         if panel_bounds:
             cx, cy = validate_hole_position(cx, cy, panel_bounds)
@@ -475,46 +500,59 @@ def generate_box_svg(params, filename="box_square.svg"):
         # 8. Edge Bot of Channel
         pts.append(transform(0, cw))
         
-        # Close shape? No, T-slot is usually cut strictly inside.
-        # But this T-slot starts AT the edge. The edge line already exists.
-        # WE usually want to *interrupt* the edge line, or just cut the T-slot "on top".
-        # If we cut on top, the laser will pass twice on the opening. That's fine.
-        
         # Draw closed polygon for T-slot (ensures proper cutting)
         nonlocal nut_count
         for i in range(len(pts)):
             next_i = (i + 1) % len(pts)
+            svg.add_line(pts[i][0], pts[i][1], pts[next_i][0], pts[i][1], mode) # Fixed: pts[next_i][1]
             svg.add_line(pts[i][0], pts[i][1], pts[next_i][0], pts[next_i][1], mode)
         nut_count += 1
 
 
     # --- Draw Parts ---
 
-    # 1. Base (S x S)
+    # 1. Base (W x D)
     bx, by = parts['Base']['x'], parts['Base']['y']
-    bw, bh = parts['Base']['w'], parts['Base']['h']
+    bw, bh = parts['Base']['w'], parts['Base']['h'] # bw = W, bh = D
     
     # ... Draw fingers ...
-    # Top (L->R): Parity 1
+    # Edge Logic for Base:
+    # Base has Tabs (Parity 1) on all sides.
+    # It mates with Bottom edges of walls.
+    
+    # Top (L->R): Mates with Back-Bottom (Slot/P-1). Base->Tab/P1.
     draw_finger_edge(bx, by, bx+bw, by, t, 1, "CUT")
-    # Right (T->B): Parity 1
+    # Right (T->B): Mates with Right-Bottom (Slot/P-1). Base->Tab/P1.
     draw_finger_edge(bx+bw, by, bx+bw, by+bh, t, 1, "CUT")
-    # Bottom (R->L): Parity 1
+    # Bottom (R->L): Mates with Front-Bottom (Slot/P-1). Base->Tab/P1.
     draw_finger_edge(bx+bw, by+bh, bx, by+bh, t, 1, "CUT")
-    # Left (B->T): Parity 1
+    # Left (B->T): Mates with Left-Bottom (Slot/P-1). Base->Tab/P1.
     draw_finger_edge(bx, by+bh, bx, by, t, 1, "CUT")
     
-    # Screws on Base: 1 hole per side, centered (for base-to-wall connection)
+    # Screws on Base: 2 holes per side (Symmetric Pattern)
+    # This anchors the walls firmly without requiring vertical screws.
     if do_screws:
         base_bounds = (bx, by, bx + bw, by + bh)
-        # Top
-        add_screw_hole(bx + bw/2, by + EDGE_OFFSET_Y, base_bounds)
-        # Bottom
-        add_screw_hole(bx + bw/2, by + bh - EDGE_OFFSET_Y, base_bounds)
-        # Left
-        add_screw_hole(bx + EDGE_OFFSET_X, by + bh/2, base_bounds)
-        # Right
-        add_screw_hole(bx + bw - EDGE_OFFSET_X, by + bh/2, base_bounds)
+        
+        # Positions: 25% and 75% along each edge
+        pos1 = 0.25
+        pos2 = 0.75
+        
+        # Top Edge (Back Wall) - along W
+        add_screw_hole(bx + W*pos1, by + EDGE_OFFSET_Y, base_bounds)
+        add_screw_hole(bx + W*pos2, by + EDGE_OFFSET_Y, base_bounds)
+        
+        # Bottom Edge (Front Wall) - along W
+        add_screw_hole(bx + W*pos1, by + D - EDGE_OFFSET_Y, base_bounds)
+        add_screw_hole(bx + W*pos2, by + D - EDGE_OFFSET_Y, base_bounds)
+        
+        # Left Edge (Left Wall) - along D
+        add_screw_hole(bx + EDGE_OFFSET_X, by + D*pos1, base_bounds)
+        add_screw_hole(bx + EDGE_OFFSET_X, by + D*pos2, base_bounds)
+        
+        # Right Edge (Right Wall) - along D
+        add_screw_hole(bx + W - EDGE_OFFSET_X, by + D*pos1, base_bounds)
+        add_screw_hole(bx + W - EDGE_OFFSET_X, by + D*pos2, base_bounds)
 
     # Base panel text engraving (optional)
     if params.get('text_base'):
@@ -541,23 +579,23 @@ def generate_box_svg(params, filename="box_square.svg"):
     # Base fits INSIDE the walls.
     # Base has Tabs (Parity 1) on all sides.
     # Front/Back Bottom Edge must accept Base Tabs with compatible Slot pattern.
-    # The Mating Zone corresponds to the center 'S' width. 
+    # The Mating Zone corresponds to the center 'W' width. 
     # Corners (size t) are solid to cover the Left/Right wall edges.
     
     def draw_wall_bottom_with_base_slots(px, py, pw, ph):
-        # Path: Start (Bottom Left) -> t (Corner) -> S (Mating Slots) -> t (Corner) -> End
+        # Path: Start (Bottom Left) -> t (Corner) -> W (Mating Slots) -> t (Corner) -> End
         p_y_bot = py + ph
         # 1. Left Corner
         svg.add_line(px, p_y_bot, px+t, p_y_bot, "CUT")
         # 2. Mating Zone (Parity -1 to Rx Base Tabs)
-        draw_finger_edge(px+t, p_y_bot, px+t+S, p_y_bot, t, -1, "CUT")
+        draw_finger_edge(px+t, p_y_bot, px+t+W, p_y_bot, t, -1, "CUT")
         # 3. Right Corner
-        svg.add_line(px+t+S, p_y_bot, px+t+S+t, p_y_bot, "CUT")
+        svg.add_line(px+t+W, p_y_bot, px+t+W+t, p_y_bot, "CUT")
 
 
-    # 2. Front (S+2t x H)
+    # 2. Front (W+2t x H)
     fx, fy = parts['Front']['x'], parts['Front']['y']
-    fw, fh = parts['Front']['w'], parts['Front']['h']
+    fw, fh = parts['Front']['w'], parts['Front']['h'] # fw = W+2t, fh = H
     
     # ... Draw Front ...
     # Top: Flat
@@ -570,17 +608,11 @@ def generate_box_svg(params, filename="box_square.svg"):
     if do_screws:
         front_bounds = (fx, fy, fx + fw, fy + fh)
         
-        # Two fasteners per vertical edge (upper and lower)
-        # Left edge (connects to Left Wall)
-        add_screw_hole(fx + EDGE_OFFSET_X, fy + EDGE_OFFSET_Y, front_bounds)
-        add_screw_hole(fx + EDGE_OFFSET_X, fy + fh - EDGE_OFFSET_Y, front_bounds)
-        
-        # Right edge (connects to Right Wall)
-        add_screw_hole(fx + fw - EDGE_OFFSET_X, fy + EDGE_OFFSET_Y, front_bounds)
-        add_screw_hole(fx + fw - EDGE_OFFSET_X, fy + fh - EDGE_OFFSET_Y, front_bounds)
-        
-        # T-Slot at Bottom (to receive Base Screw) - centered
-        draw_t_slot(fx + fw/2, fy + fh, 'UP')
+        # T-slots at Bottom (to receive Base Screws)
+        # Positions based on Base Width (W)
+        # Note: Front/Back width 'fw' corresponds to W
+        draw_t_slot(fx + fw*0.25, fy + fh, 'UP')
+        draw_t_slot(fx + fw*0.75, fy + fh, 'UP')
 
 
     # Divider Slot
@@ -588,7 +620,7 @@ def generate_box_svg(params, filename="box_square.svg"):
 
     # 3. Back Wall
     bax, bay = parts['Back']['x'], parts['Back']['y']
-    baw, bah = parts['Back']['w'], parts['Back']['h']
+    baw, bah = parts['Back']['w'], parts['Back']['h'] # baw = W+2t, bah = H
     
     svg.add_line(bax, bay, bax+baw, bay, "CUT") # Top
     draw_finger_edge(bax+baw, bay, bax+baw, bay+bah, t, 1, "CUT") # Right
@@ -598,17 +630,12 @@ def generate_box_svg(params, filename="box_square.svg"):
     if do_screws:
         back_bounds = (bax, bay, bax + baw, bay + bah)
         
-        # Two fasteners per vertical edge (upper and lower)
-        # Left edge
-        add_screw_hole(bax + EDGE_OFFSET_X, bay + EDGE_OFFSET_Y, back_bounds)
-        add_screw_hole(bax + EDGE_OFFSET_X, bay + bah - EDGE_OFFSET_Y, back_bounds)
-        
-        # Right edge
-        add_screw_hole(bax + baw - EDGE_OFFSET_X, bay + EDGE_OFFSET_Y, back_bounds)
-        add_screw_hole(bax + baw - EDGE_OFFSET_X, bay + bah - EDGE_OFFSET_Y, back_bounds)
-        
-        # T-Slot at Bottom (centered)
-        draw_t_slot(bax + baw/2, bay + bah, 'UP')
+        # T-slots at Bottom (to receive Base Screws)
+        # T-slots at Bottom (to receive Base Screws)
+        # Positions based on Base Width (W)
+        # Note: Front/Back width 'fw' corresponds to W
+        draw_t_slot(fx + fw*0.25, fy + fh, 'UP')
+        draw_t_slot(fx + fw*0.75, fy + fh, 'UP')
 
     # Divider Slots (Applied to Front and Back)
     if 'divider_pos' in params:
@@ -617,17 +644,23 @@ def generate_box_svg(params, filename="box_square.svg"):
         slot_h = H / 2
         slot_y_rel = H / 4
         
+        # Divider is placed along Width W.
+        # Slots are on Front/Back walls.
+        
         # Front Slot
-        fx_center = fx + t + (S * d_pos)
+        # Center of slot is at t + (W * d_pos). Warning: Front starts at x=0
+        # Actually Front has width W+2t. Inner start is at t.
+        # So x relative to left edge = t + (W * d_pos).
+        fx_center = fx + t + (W * d_pos)
         svg.add_rect(fx_center - slot_w/2, fy + slot_y_rel, slot_w, slot_h, "CUT")
         
         # Back Slot
-        bx_center = bax + t + (S * d_pos)
+        bx_center = bax + t + (W * d_pos)
         svg.add_rect(bx_center - slot_w/2, bay + slot_y_rel, slot_w, slot_h, "CUT")
 
-    # 4. Left Side Wall (S x H)
+    # 4. Left Side Wall (D x H)
     lx, ly = parts['Left']['x'], parts['Left']['y']
-    lw, lh = parts['Left']['w'], parts['Left']['h']
+    lw, lh = parts['Left']['w'], parts['Left']['h'] # lw = D, lh = H
     
     # ... Draw Left ...
     svg.add_line(lx, ly, lx+lw, ly, "CUT") # Top Flat
@@ -636,19 +669,10 @@ def generate_box_svg(params, filename="box_square.svg"):
     draw_finger_edge(lx, ly+lh, lx, ly, t, -1, "CUT")       # Left Side
     
     if do_screws:
-        # T-Slots on Vertical Edges (to receive Front/Back screws)
-        # Two fasteners per vertical edge (upper and lower)
-        
-        # Left Edge (Back Mating): Direction RIGHT (Into material)
-        draw_t_slot(lx, ly + EDGE_OFFSET_Y, 'RIGHT')
-        draw_t_slot(lx, ly + lh - EDGE_OFFSET_Y, 'RIGHT')
-        
-        # Right Edge (Front Mating): Direction LEFT (Into material)
-        draw_t_slot(lx + lw, ly + EDGE_OFFSET_Y, 'LEFT')
-        draw_t_slot(lx + lw, ly + lh - EDGE_OFFSET_Y, 'LEFT')
-        
-        # Bottom Edge: Receives Base Screw. Direction UP (centered)
-        draw_t_slot(lx + lw/2, ly + lh, 'UP')
+        # Bottom Edge: Receives Base Screws. Direction UP
+        # Base has holes at 25% and 75% of WIDTH here.
+        draw_t_slot(lx + D*0.25, ly + lh, 'UP')
+        draw_t_slot(lx + D*0.75, ly + lh, 'UP')
     
     # Fractal on Left Wall (Side without text/logo)
     if params.get('fractal'):
@@ -665,7 +689,7 @@ def generate_box_svg(params, filename="box_square.svg"):
 
     # 5. Right Side Wall
     rx, ry = parts['Right']['x'], parts['Right']['y']
-    rw, rh = parts['Right']['w'], parts['Right']['h']
+    rw, rh = parts['Right']['w'], parts['Right']['h'] # rw = D, rh = H
     
     # ... Draw Right ...
     svg.add_line(rx, ry, rx+rw, ry, "CUT")
@@ -674,19 +698,9 @@ def generate_box_svg(params, filename="box_square.svg"):
     draw_finger_edge(rx, ry+rh, rx, ry, t, -1, "CUT")
     
     if do_screws:
-        # T-Slots on Vertical Edges (to receive Front/Back screws)
-        # Two fasteners per vertical edge (upper and lower)
-        
-        # Left Edge: Direction RIGHT
-        draw_t_slot(rx, ry + EDGE_OFFSET_Y, 'RIGHT')
-        draw_t_slot(rx, ry + rh - EDGE_OFFSET_Y, 'RIGHT')
-        
-        # Right Edge: Direction LEFT
-        draw_t_slot(rx + rw, ry + EDGE_OFFSET_Y, 'LEFT')
-        draw_t_slot(rx + rw, ry + rh - EDGE_OFFSET_Y, 'LEFT')
-        
-        # Bottom: Direction UP (centered)
-        draw_t_slot(rx + rw/2, ry + rh, 'UP')
+        # Bottom: Direction UP
+        draw_t_slot(rx + D*0.25, ry + rh, 'UP')
+        draw_t_slot(rx + D*0.75, ry + rh, 'UP')
         
     # Text and Logo on Right Wall (Side without Divider)
     if params.get('text_top'):
@@ -730,11 +744,11 @@ def generate_box_svg(params, filename="box_square.svg"):
     # 6. Divider (if enabled)
     if 'Divider' in parts:
         dx, dy = parts['Divider']['x'], parts['Divider']['y']
-        dw, dh = parts['Divider']['w'], parts['Divider']['h'] # Total W, H
+        dw, dh = parts['Divider']['w'], parts['Divider']['h'] # Total W=D, H
         
         # Logic from generate_divider_svg (Tabbed)
         clearance = 0.5
-        body_w = S - clearance
+        body_w = D - clearance # Divider width is D
         # To touch bottom (Base), Height should be H - t.
         # Originally was H - t - clearance.
         body_h = H - t
@@ -742,26 +756,10 @@ def generate_box_svg(params, filename="box_square.svg"):
         tab_h = (H / 2) - clearance
         tab_w = t
         
-        #
-        
-        # Vertical Alignment: 
-        # Wall Slot Start (from Top 0): H/4.
-        # Divider Top (flush with Wall Top).
-        # So Divider Tab Start (from Top 0): H/4 + clearance/2.
-        
+        # Vertical Alignment: Divider Top flush with Wall Top
         slot_y_start_rel = (H - (H/2)) / 2 # H/4
         tab_y_start_rel = slot_y_start_rel + (clearance / 2)
         tab_y_end_rel = tab_y_start_rel + tab_h
-        
-        # Origin (Top-Left of Body, not total). 
-        # Let's map points relative to dx, dy (Top Left of Total Bounding Box).
-        # Total Box: x=dx, y=dy.
-        # Body X: dx + tab_w.
-        # Body Y: dy (Flush Top? No, Divider height is H - t - clearance). 
-        # Wall Slot is centered on H. Divider should sit on Base (at H-t).
-        # But we want divider flush with TOP.
-        # So Divider Top = Wall Top.
-        # So Divider Body Y = dy.
         
         ox = dx + tab_w
         oy = dy
@@ -795,51 +793,57 @@ def generate_box_svg(params, filename="box_square.svg"):
         # 8. Left Side Upper
         svg.add_line(ox, oy + tab_y_start_rel, ox, oy, "CUT")
 
-    # 7. Lid (if enabled)
+    # Lid Drawing Logic
     if 'Lid' in parts:
-        ldx, ldy = parts['Lid']['x'], parts['Lid']['y']
-        lid_outer = parts['Lid']['w']  # S + 2*t
+        lidx, lidy = parts['Lid']['x'], parts['Lid']['y']
         
-        # Clearance for smooth fit
+        # Lid dimensions (Outer)
+        # lid_w = W + 2t, lid_h = D + 2t
+        lid_w = W + 2*t
+        lid_d = D + 2*t
+        
+        # Main Lid Panel
+        svg.add_rect(lidx, lidy, lid_w, lid_d, "CUT")
+        
+        # Inner Lip Logic
+        # 4 Strips. Need to fit INSIDE the box walls.
+        # Top/Bottom strips (along W). Left/Right strips (along D).
+        
         clearance = 0.3
+        lip_h = t
         
-        # Lip dimensions
-        lip_depth = t  # Lip goes inward by material thickness
-        lip_height = t  # Lip height equals material thickness
+        # Draw the 4 lip pieces ABOVE the lid
         
-        # Main lid panel (outer dimensions)
-        # Draw as simple rectangle
-        svg.add_rect(ldx, ldy, lid_outer, lid_outer, "CUT")
+        margin_lid = 5.0
         
-        # Draw four lip sides (inset from edges)
-        # These create the friction fit by sitting inside the box walls
+        # Strip lengths
+        len_w = W - clearance
+        # Length of depth strips
+        len_d_short = D - clearance - 2*t 
         
-        # Lip inner dimensions (with clearance)
-        lip_inner_w = S - clearance
-        lip_inner_h = S - clearance
+        # Position: Stacked above the lid
+        # lidy is the Top of the Main Panel.
+        # We start drawing strips above it.
+        # Strip 1 (Bottom-most strip, closest to lid): lidy - margin - t
         
-        # Lip offset from lid edge
-        lip_offset = t
+        curr_lip_y = lidy - margin_lid - t
         
-        # Top lip (horizontal)
-        lip_top_x = ldx + lip_offset
-        lip_top_y = ldy + lid_outer + margin
-        svg.add_rect(lip_top_x, lip_top_y, lip_inner_w, lip_height, "CUT")
+        # 1. Width Strip 1
+        svg.add_rect(lidx, curr_lip_y, len_w, t, "CUT")
         
-        # Bottom lip (horizontal)
-        lip_bot_x = ldx + lip_offset
-        lip_bot_y = lip_top_y + lip_height + margin
-        svg.add_rect(lip_bot_x, lip_bot_y, lip_inner_w, lip_height, "CUT")
+        # 2. Width Strip 2
+        curr_lip_y -= (t + margin_lid)
+        svg.add_rect(lidx, curr_lip_y, len_w, t, "CUT")
         
-        # Left lip (vertical)
-        lip_left_x = ldx + lid_outer + margin
-        lip_left_y = ldy + lip_offset
-        svg.add_rect(lip_left_x, lip_left_y, lip_height, lip_inner_h, "CUT")
-        
-        # Right lip (vertical)
-        lip_right_x = lip_left_x + lip_height + margin
-        lip_right_y = ldy + lip_offset
-        svg.add_rect(lip_right_x, lip_right_y, lip_height, lip_inner_h, "CUT")
+        # 3. Depth Strip 1
+        if len_d_short > 0:
+            curr_lip_y -= (t + margin_lid)
+            svg.add_rect(lidx, curr_lip_y, len_d_short, t, "CUT")
+            
+        # 4. Depth Strip 2
+        if len_d_short > 0:
+            curr_lip_y -= (t + margin_lid)
+            svg.add_rect(lidx, curr_lip_y, len_d_short, t, "CUT")
 
 
     svg.save()
@@ -865,15 +869,17 @@ def print_software_description(params):
     """Prints the description of the software as required by rubric."""
     print("\n--- Software Description (Acrylic) ---")
     print("1. Calculation Steps:")
-    print("   - Inputs: Box Side (S), Height (H), Material Thickness (t).")
+    print("   - Inputs: Box Width (W), Depth (D), Height (H), Material Thickness (t).")
     print("   - Design: 5-Part Finger Joint Box (Base, Front, Back, Left, Right).")
     if params.get('lid'):
         print("   - Lid: Removable friction-fit lid with inset lip.")
     print("   - Fingers: Calculated dynamically based on edge length (aiming for 10mm tabs).")
-    print("   - Base Size: S x S (Tabs Out).")
-    print("   - Front/Back Size: (S + 2t) x H. Covers corners.")
+    print(f"   - Base Size: {params['W']} x {params['D']} (Tabs Out).")
+    print(f"   - Front/Back Size: ({params['W']} + 2t) x {params['H']}. Covers corners.")
+    print(f"   - Left/Right Size: {params['D']} x {params['H']}.")
     if params.get('lid'):
-        print("   - Lid Size: (S + 2t) x (S + 2t) with 4 lip sides (height=t, clearance=0.3mm).")
+        print(f"   - Lid Size: ({params['W']}+2t) x ({params['D']}+2t) with 4 lip sides.")
+        print(f"   - Lid Lip: Inner W = {params['W']}-0.3mm, Inner D = {params['D']}-0.3mm.")
     print("2. Conditions:")
     print(f"   - Thickness t ({params.get('t')}mm) used for finger depth.")
     print("   - Layout checked against stock.")
@@ -902,10 +908,10 @@ def get_bool(prompt):
 def validate_inputs(params):
     t = params['t']
     if t <= 0: return False, "Thickness must be positive."
-    if params['S'] <= 0 or params['H'] <= 0: return False, "Dimensions must be positive."
-    limit = min(params['S'], params['H']) / 2
+    if params['W'] <= 0 or params['D'] <= 0 or params['H'] <= 0: return False, "Dimensions must be positive."
+    limit = min(params['W'], params['D'], params['H']) / 2
     if t >= limit:
-        return False, f"Thickness {t} is too large."
+        return False, f"Thickness {t} is too large for smallest dimension."
     return True, ""
 
 def main():
@@ -917,8 +923,10 @@ def main():
     params['t'] = get_float("Material Thickness t (mm)", 3.0)
     
     print("\n-- Dimensions --")
-    params['S'] = get_float("Box Side Length S (mm) [Inner]", 100.0)
-    params['H'] = get_float("Box Height H (mm)", params['S'])
+    S_default = 100.0
+    params['W'] = get_float("Box Width (Front/Back) W (mm)", S_default)
+    params['D'] = get_float("Box Depth (Left/Right) D (mm)", 100.0)
+    params['H'] = get_float("Box Height H (mm)", S_default)
     
     print("\n-- Features --")
     # Default Divider to Yes
@@ -951,7 +959,7 @@ def main():
     params['text_front'] = ""
     
     params['include_logo'] = get_bool("Engrave Columbia Logo (Front Wall)?")
-    # params['include_fractal'] removed per user request
+    # params['include_fractal'] logic handled previously
     
     # Validation
     valid, msg = validate_inputs(params)
