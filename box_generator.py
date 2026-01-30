@@ -730,10 +730,14 @@ def generate_box_svg(params, filename="box_square.svg"):
                 shield_href = f"data:image/svg+xml;base64,{shield_b64}"
                 
                 # Logo dimensions and positioning on Right Wall
-                img_w = 100.0
-                img_h = 52.4
+                # Position below "DIGITAL MANUFACTURING" text
+                # Text is at cy - 15.
+                
+                img_w = 40.0   # Reduced from 100mm
+                img_h = 20.96  # Aspect ratio maintained (approx 1:0.524)
+                
                 img_x = rx + rw/2 - img_w/2
-                img_y = ry + rh/2 - 5
+                img_y = ry + rh/2 + 5  # 5mm below center (Text is above center)
                 
                 svg.add_image(img_x, img_y, img_w, img_h, shield_href, "ENGRAVE")
         except Exception as e:
@@ -958,7 +962,9 @@ def main():
     # Disable Front Text prompt (keep clean)
     params['text_front'] = ""
     
-    params['include_logo'] = get_bool("Engrave Columbia Logo (Front Wall)?")
+    # Logo option (default to yes)
+    do_logo = input("Engrave Columbia Logo (Front Wall)? (y/n) [y]: ").lower() != 'n'
+    params['include_logo'] = do_logo
     # params['include_fractal'] logic handled previously
     
     # Validation
