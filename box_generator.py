@@ -150,6 +150,12 @@ def generate_box_svg(params, filename="box_square.svg"):
 
     if 'divider_pos' in params:
         parts['Divider'] = {'w': S, 'h': H}
+    
+    # 4. Lid (if enabled) - outer dimensions match box
+    if params.get('lid', True):
+        # Main lid panel
+        lid_outer = S + 2*t
+        parts['Lid'] = {'w': lid_outer, 'h': lid_outer}
 
     
     # --- Fractal Generator ---
@@ -234,13 +240,29 @@ def generate_box_svg(params, filename="box_square.svg"):
     if 'Divider' in parts:
         parts['Divider']['x'] = x_cursor
         parts['Divider']['y'] = y_cursor
+        x_cursor += parts['Divider']['w'] + margin
         # Check stock width
-        if x_cursor + parts['Divider']['w'] > stock_w:
+        if x_cursor > stock_w:
             # Move to Row 3 if needed
             x_cursor = margin
-            y_cursor += max(parts['Base']['h'], parts['Left']['h']) + margin # This should be max height of previous row
+            y_cursor += max(parts['Base']['h'], parts['Left']['h']) + margin
             parts['Divider']['x'] = x_cursor
             parts['Divider']['y'] = y_cursor
+            x_cursor += parts['Divider']['w'] + margin
+    
+    # Lid
+    if 'Lid' in parts:
+        # Add extra spacing after divider
+        x_cursor += margin * 2  # Extra spacing between divider and lid
+        
+        # Check if lid fits on current row
+        if x_cursor + parts['Lid']['w'] > stock_w:
+            # Move to next row
+            x_cursor = margin
+            y_cursor += max([p.get('h', 0) for p in [parts.get('Base'), parts.get('Divider')] if p]) + margin
+        
+        parts['Lid']['x'] = x_cursor
+        parts['Lid']['y'] = y_cursor
             
     # Check Layout Bounds
     max_x = 0
@@ -494,7 +516,26 @@ def generate_box_svg(params, filename="box_square.svg"):
         # Right
         add_screw_hole(bx + bw - EDGE_OFFSET_X, by + bh/2, base_bounds)
 
-    # Base panel - no engraving (moved to right wall)
+    # Base panel text engraving (optional)
+    if params.get('text_base'):
+        text = params['text_base']
+        cx = bx + bw/2
+        cy = by + bh/2
+        
+        # Check if text contains separator (|)
+        if '|' in text:
+            # Split into two lines at the separator
+            parts_text = [p.strip() for p in text.split('|')]
+            if len(parts_text) == 2:
+                # Two lines, same positioning as right wall text
+                svg.add_text(cx, cy - 25, parts_text[0], font_size=8, mode="ENGRAVE")
+                svg.add_text(cx, cy - 15, parts_text[1], font_size=8, mode="ENGRAVE")
+            else:
+                # Fallback to single line if more than 2 parts
+                svg.add_text(cx, cy - 20, text, font_size=8, mode="ENGRAVE")
+        else:
+            # Single line text
+            svg.add_text(cx, cy - 20, text, font_size=8, mode="ENGRAVE")
 
     # Edge Logic for Front/Back (Bottom):
     # Base fits INSIDE the walls.
@@ -754,6 +795,53 @@ def generate_box_svg(params, filename="box_square.svg"):
         # 8. Left Side Upper
         svg.add_line(ox, oy + tab_y_start_rel, ox, oy, "CUT")
 
+    # 7. Lid (if enabled)
+    if 'Lid' in parts:
+        ldx, ldy = parts['Lid']['x'], parts['Lid']['y']
+        lid_outer = parts['Lid']['w']  # S + 2*t
+        
+        # Clearance for smooth fit
+        clearance = 0.3
+        
+        # Lip dimensions
+        lip_depth = t  # Lip goes inward by material thickness
+        lip_height = t  # Lip height equals material thickness
+        
+        # Main lid panel (outer dimensions)
+        # Draw as simple rectangle
+        svg.add_rect(ldx, ldy, lid_outer, lid_outer, "CUT")
+        
+        # Draw four lip sides (inset from edges)
+        # These create the friction fit by sitting inside the box walls
+        
+        # Lip inner dimensions (with clearance)
+        lip_inner_w = S - clearance
+        lip_inner_h = S - clearance
+        
+        # Lip offset from lid edge
+        lip_offset = t
+        
+        # Top lip (horizontal)
+        lip_top_x = ldx + lip_offset
+        lip_top_y = ldy + lid_outer + margin
+        svg.add_rect(lip_top_x, lip_top_y, lip_inner_w, lip_height, "CUT")
+        
+        # Bottom lip (horizontal)
+        lip_bot_x = ldx + lip_offset
+        lip_bot_y = lip_top_y + lip_height + margin
+        svg.add_rect(lip_bot_x, lip_bot_y, lip_inner_w, lip_height, "CUT")
+        
+        # Left lip (vertical)
+        lip_left_x = ldx + lid_outer + margin
+        lip_left_y = ldy + lip_offset
+        svg.add_rect(lip_left_x, lip_left_y, lip_height, lip_inner_h, "CUT")
+        
+        # Right lip (vertical)
+        lip_right_x = lip_left_x + lip_height + margin
+        lip_right_y = ldy + lip_offset
+        svg.add_rect(lip_right_x, lip_right_y, lip_height, lip_inner_h, "CUT")
+
+
     svg.save()
     
     # Print Bill of Materials (BOM) for screws
@@ -779,15 +867,21 @@ def print_software_description(params):
     print("1. Calculation Steps:")
     print("   - Inputs: Box Side (S), Height (H), Material Thickness (t).")
     print("   - Design: 5-Part Finger Joint Box (Base, Front, Back, Left, Right).")
+    if params.get('lid'):
+        print("   - Lid: Removable friction-fit lid with inset lip.")
     print("   - Fingers: Calculated dynamically based on edge length (aiming for 10mm tabs).")
     print("   - Base Size: S x S (Tabs Out).")
     print("   - Front/Back Size: (S + 2t) x H. Covers corners.")
+    if params.get('lid'):
+        print("   - Lid Size: (S + 2t) x (S + 2t) with 4 lip sides (height=t, clearance=0.3mm).")
     print("2. Conditions:")
     print(f"   - Thickness t ({params.get('t')}mm) used for finger depth.")
     print("   - Layout checked against stock.")
     print("3. Formulas:")
     print("   - Tab Depth = t")
     print("   - Tab Parity ensures A-fits-B (1 vs -1).")
+    if params.get('lid'):
+        print("   - Lid Lip: Inner dimensions = S - 0.3mm (clearance for friction fit).")
     print("----------------------------\n")
 
 def get_float(prompt, default=None):
@@ -838,11 +932,20 @@ def main():
     do_fractal = input("Engrave Fractal on Side Wall? (y/n) [y]: ").lower() != 'n'
     params['fractal'] = do_fractal
     
+    # Lid option (default to yes)
+    do_lid = input("Include Removable Lid? (y/n) [y]: ").lower() != 'n'
+    params['lid'] = do_lid
+    
     print("\n-- Engraving --")
     # Default Base Text
     default_base_text = "DIGITAL MANUFACTURING"
     t_top = input(f"Text on Base [{default_base_text}]: ")
     params['text_top'] = t_top if t_top else default_base_text
+    
+    # Base panel text (new option)
+    default_base_text_bottom = "LORENZO | DIANE"
+    t_base = input(f"Text on Bottom (Base Panel) [{default_base_text_bottom}]: ")
+    params['text_base'] = t_base if t_base else default_base_text_bottom
     
     # Disable Front Text prompt (keep clean)
     params['text_front'] = ""
