@@ -733,11 +733,11 @@ def generate_box_svg(params, filename="box_square.svg"):
                 # Position below "DIGITAL MANUFACTURING" text
                 # Text is at cy - 15.
                 
-                img_w = 40.0   # Reduced from 100mm
-                img_h = 20.96  # Aspect ratio maintained (approx 1:0.524)
+                img_w = 80.0   # Doubled to 80mm per request
+                img_h = 41.92  # Aspect ratio maintained (approx 1:0.524)
                 
                 img_x = rx + rw/2 - img_w/2
-                img_y = ry + rh/2 + 5  # 5mm below center (Text is above center)
+                img_y = ry + rh/2 + 5  # 5mm below center
                 
                 svg.add_image(img_x, img_y, img_w, img_h, shield_href, "ENGRAVE")
         except Exception as e:
