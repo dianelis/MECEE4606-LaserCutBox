@@ -718,7 +718,7 @@ def generate_box_svg(params, filename="box_square.svg"):
     
     # Columbia Logo on Right Wall
     shield_rel_path = "columbia_logo.svg"
-    shield_full_path = os.path.join("output", shield_rel_path)
+    shield_full_path = os.path.join("logo", shield_rel_path)
     if os.path.exists(shield_full_path):
         try:
             with open(shield_full_path, "r") as IMG:
