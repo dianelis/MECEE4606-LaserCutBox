@@ -737,7 +737,7 @@ def generate_box_svg(params, filename="box_square.svg"):
                 img_h = 41.92  # Aspect ratio maintained (approx 1:0.524)
                 
                 img_x = rx + rw/2 - img_w/2
-                img_y = ry + rh/2 + 5  # 5mm below center
+                img_y = ry + rh/2 - 5  # Moved up 10mm (was +5, now -5)
                 
                 svg.add_image(img_x, img_y, img_w, img_h, shield_href, "ENGRAVE")
         except Exception as e:
